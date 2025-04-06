@@ -1,0 +1,24 @@
+[Desktop Entry]
+Version=1.0
+Name=Chromium Web Browser
+Name[zh_CN]=Chromium 网页浏览器
+Name[zh_HK]=Chromium 網頁瀏覽器
+Name[zh_TW]=Chromium 網頁瀏覽器
+GenericName=Web Browser
+GenericName[zh_CN]=网页浏览器
+GenericName[zh_HK]=網頁瀏覽器
+GenericName[zh_TW]=網頁瀏覽器
+Comment=Access the Internet
+Comment[zh_CN]=访问互联网
+Comment[zh_HK]=連線到網際網路
+Comment[zh_TW]=連線到網際網路
+Exec=/opt/apps/org.mojo.browser/files/browser %U
+Terminal=false
+X-MultipleArgs=false
+Type=Application
+Icon=org.mojo.browser
+Categories=Network;WebBrowser;
+MimeType=text/html;text/xml;application/xhtml_xml;application/x-mimearchive;x-scheme-handler/http;x-scheme-handler/https;
+StartupWMClass=org.mojo.browser
+StartupNotify=true
+Keywords=browser

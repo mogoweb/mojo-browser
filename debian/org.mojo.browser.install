@@ -1,0 +1,39 @@
+out/Release/chromium opt/apps/org.mojo.browser/files/chromium
+
+out/Release/chrome_*.pak opt/apps/org.mojo.browser/files/chromium
+out/Release/resources.pak opt/apps/org.mojo.browser/files/chromium
+
+out/Release/resources/en-US.pak opt/apps/org.mojo.browser/files/chromium/locales
+
+debian/presubj usr/share/bug/chromium
+
+debian/initial_bookmarks.html opt/apps/org.mojo.browser/files/etc/chromium
+
+debian/org.mojo.browser.xml usr/share/gnome-control-center/default-apps
+
+debian/org.mojo.browser.desktop opt/apps/org.mojo.browser/entries/applications
+
+debian/etc/README opt/apps/org.mojo.browser/files/etc/chromium.d
+debian/etc/apikeys opt/apps/org.mojo.browser/files/etc/chromium.d
+debian/etc/extensions opt/apps/org.mojo.browser/files/etc/chromium.d
+debian/etc/default-flags opt/apps/org.mojo.browser/files/etc/chromium.d
+debian/etc/master_preferences opt/apps/org.mojo.browser/files/etc/chromium
+
+# chromium-common
+out/Release/*.bin opt/apps/org.mojo.browser/files/chromium
+out/Release/libEGL.so opt/apps/org.mojo.browser/files/chromium
+out/Release/libGLESv2.so opt/apps/org.mojo.browser/files/chromium
+
+out/Release/chrome_crashpad_handler opt/apps/org.mojo.browser/files/chromium
+
+# only if building against bundled ICU
+out/Release/icudtl.dat opt/apps/org.mojo.browser/files/chromium
+
+# chromium-sandbox
+out/Release/chrome-sandbox opt/apps/org.mojo.browser/files/chromium
+
+# chromium-i10n
+out/Release/locales opt/apps/org.mojo.browser/files/chromium
+
+# info
+debian/mojo/info opt/apps/org.mojo.browser

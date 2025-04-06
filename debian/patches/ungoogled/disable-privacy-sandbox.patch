@@ -1,0 +1,58 @@
+description: disable Privacy Sandbox completely
+
+https://github.com/ungoogled-software/ungoogled-chromium/blob/master/patches/core/ungoogled-chromium/disable-privacy-sandbox.patch
+
+--- a/components/attribution_reporting/features.cc
++++ b/components/attribution_reporting/features.cc
+@@ -11,7 +11,7 @@ namespace attribution_reporting::feature
+ // Controls whether the Conversion Measurement API infrastructure is enabled.
+ BASE_FEATURE(kConversionMeasurement,
+              "ConversionMeasurement",
+-             base::FEATURE_ENABLED_BY_DEFAULT);
++             base::FEATURE_DISABLED_BY_DEFAULT);
+ 
+ BASE_FEATURE(kAttributionAggregatableDebugReporting,
+              "AttributionAggregatableDebugReporting",
+--- a/components/privacy_sandbox/privacy_sandbox_settings_impl.cc
++++ b/components/privacy_sandbox/privacy_sandbox_settings_impl.cc
+@@ -125,7 +125,7 @@ std::set<browsing_topics::Topic> GetTopi
+ 
+ // static
+ bool PrivacySandboxSettingsImpl::IsAllowed(Status status) {
+-  return status == Status::kAllowed;
++  return false;
+ }
+ 
+ // static
+@@ -775,7 +775,7 @@ void PrivacySandboxSettingsImpl::SetTopi
+ }
+ 
+ bool PrivacySandboxSettingsImpl::IsPrivacySandboxRestricted() const {
+-  return delegate_->IsPrivacySandboxRestricted();
++  return true;
+ }
+ 
+ bool PrivacySandboxSettingsImpl::IsPrivacySandboxCurrentlyUnrestricted() const {
+@@ -844,11 +844,7 @@ PrivacySandboxSettingsImpl::GetPrivacySa
+     return Status::kIncognitoProfile;
+   }
+ 
+-  if (IsPrivacySandboxRestricted() && !should_ignore_restriction) {
+     return Status::kRestricted;
+-  }
+-
+-  return Status::kAllowed;
+ }
+ 
+ PrivacySandboxSettingsImpl::Status
+--- a/content/browser/aggregation_service/aggregation_service_features.cc
++++ b/content/browser/aggregation_service/aggregation_service_features.cc
+@@ -8,7 +8,7 @@ namespace content {
+ 
+ BASE_FEATURE(kPrivacySandboxAggregationService,
+              "PrivacySandboxAggregationService",
+-             base::FEATURE_ENABLED_BY_DEFAULT);
++             base::FEATURE_DISABLED_BY_DEFAULT);
+ 
+ const base::FeatureParam<std::string>
+     kPrivacySandboxAggregationServiceTrustedServerUrlAwsParam{

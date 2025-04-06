@@ -1,0 +1,245 @@
+#!/usr/bin/make -f
+
+# enable verbose build messages
+export DH_VERBOSE=1
+
+# enable all build hardening flags
+export DEB_BUILD_MAINT_OPTIONS=hardening=+all
+
+# disable lto flags, as they are for gcc, not clang
+export DEB_BUILD_MAINT_OPTIONS+=optimize=-lto
+
+# indicate that binary targets do not require root
+export DEB_RULES_REQUIRES_ROOT=no
+
+# compile with clang (gcc is currently not supported)
+export AR=ar
+export NM=nm
+export CC=clang-16
+export CXX=clang++-16
+
+# initial flags from dpkg-buildflags
+export DEB_CXXFLAGS_MAINT_STRIP=-g
+export CXXFLAGS=$(shell dpkg-buildflags --get CXXFLAGS) -stdlib=libc++ -I/usr/lib/llvm-16/include/c++/v1
+export LDFLAGS=$(shell dpkg-buildflags --get LDFLAGS) -stdlib=libc++ -Wl,-rpath,/usr/lib/llvm-16/lib
+
+# more verbose linker output
+export LDFLAGS+=-Wl,--stats
+
+# extra flags to reduce warnings that aren't very useful
+export CXXFLAGS+=-Wno-conversion \
+                 -Wno-unused-function \
+                 -Wno-unused-variable \
+                 -Wno-unused-private-field \
+                 -Wno-deprecated-declarations \
+                 -Wno-unknown-pragmas \
+
+# do not optimize away null pointer safety checks
+export CXXFLAGS+=-fno-delete-null-pointer-checks
+
+# disable clang plugins
+defines=clang_use_chrome_plugins=false
+
+# use system rust
+export RUSTC_BOOTSTRAP=1
+export CLANG_MVERS=$(shell $(CC) --version | sed -n 's/.* clang version //p' | cut -d. -f1)
+defines+=rust_sysroot_absolute=\"/usr\"
+defines+=rust_bindgen_root=\"$(CURDIR)/debian/bindgen/root/usr\"
+defines+=rustc_version=\"$(shell rustc --version)\"
+defines+=clang_base_path=\"/usr/lib/llvm-$(CLANG_MVERS)\"
+defines+=clang_version=\"$(CLANG_MVERS)\"
+
+# build using system toolchain
+defines+=host_toolchain=\"//build/toolchain/linux/unbundle:default\"
+defines+=custom_toolchain=\"//build/toolchain/linux/unbundle:default\"
+
+# set the appropriate cpu architecture
+DEB_HOST_ARCH ?= $(shell dpkg-architecture -qDEB_HOST_ARCH)
+ifeq (i386,$(DEB_HOST_ARCH))
+defines+=host_cpu=\"x86\" use_vaapi=true
+endif
+ifeq (amd64,$(DEB_HOST_ARCH))
+defines+=host_cpu=\"x64\" use_vaapi=true
+endif
+ifeq (arm64,$(DEB_HOST_ARCH))
+defines+=host_cpu=\"arm64\" use_v4l2_codec=true use_vaapi=false
+endif
+ifeq (armhf,$(DEB_HOST_ARCH))
+defines+=host_cpu=\"arm\" use_v4l2_codec=true use_vaapi=false arm_use_neon=true
+endif
+
+# thin lto requires >4 GB RAM, so avoid it on 32-bit architectures
+ifeq ($(filter armhf i386,$(DEB_HOST_ARCH)),)
+defines+=use_thin_lto=true
+else
+defines+=use_thin_lto=false \
+         concurrent_links=1
+endif
+
+# disabled features
+defines+=is_debug=false \
+         use_sysroot=false \
+         use_libjpeg_turbo=true \
+         use_custom_libcxx=false \
+         use_unofficial_version_number=false \
+         enable_vr=false \
+         enable_nacl=false \
+         enable_swiftshader=false \
+         dawn_use_swiftshader=false \
+         build_dawn_tests=false \
+         enable_reading_list=false \
+         enable_iterator_debugging=false \
+         enable_hangout_services_extension=false \
+         angle_has_histograms=false \
+         angle_build_tests=false \
+         build_angle_perftests=false \
+         treat_warnings_as_errors=false \
+         use_qt=false \
+         is_cfi=false \
+         chrome_pgo_phase=0 \
+
+# enabled features
+defines+=use_gio=true \
+         is_official_build=true \
+         symbol_level=0 \
+         use_pulseaudio=true \
+         link_pulseaudio=true \
+         rtc_use_pipewire=true \
+         icu_use_data_file=true \
+         enable_widevine=true \
+         v8_enable_backtrace=true \
+         use_system_zlib=true \
+         use_system_lcms2=true \
+         use_system_libjpeg=true \
+         use_system_libpng=true \
+         use_system_freetype=true \
+         use_system_harfbuzz=true \
+         use_system_libopenjpeg2=true \
+         proprietary_codecs=true \
+         ffmpeg_branding=\"Chrome\" \
+         disable_fieldtrial_testing_config=true \
+
+# handle parallel build options
+njobs=1
+ifneq (,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
+njobs=$(patsubst parallel=%,%,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
+endif
+
+DIST := $(shell dpkg-parsechangelog -l debian/changelog  | sed -n 's/^Distribution: //p')
+
+%:
+	dh $@
+
+
+# don't build armhf on build systems that lack NEON
+test_armhf_neon:
+	uname -m
+	if [ `uname -m` = "armv7l" ]; then \
+		grep -q 'neon\|asimd' /proc/cpuinfo || { \
+			echo "No NEON extension detected on armhf, refusing to build" 1>&2; \
+			false; \
+		}; \
+	fi
+
+set_up_bindgen:
+	# Bookworm's bindgen is too old. This is a workaround using the
+	# packages from
+	# <https://snapshot.debian.org/package/rust-bindgen-cli/0.66.1-3/>, which
+	# are new enough to build chromium but old enough to not be linked against
+	# Trixie's libc6 2.38
+	mkdir -p debian/bindgen/root
+	ar --output debian/bindgen/root vx debian/bindgen/bindgen_0.66.1-3_$(DEB_HOST_ARCH).deb
+	tar -C debian/bindgen/root -Jxvf debian/bindgen/root/data.tar.xz
+
+override_dh_auto_configure: test_armhf_neon set_up_bindgen
+	# verify that we're not accidentally uploading to stable-security without CVEs
+	@echo "$(DIST)" | grep -q -- '-security' && { \
+		dpkg-parsechangelog -l debian/changelog | grep -q 'CVE-' || { \
+			echo "ERROR: security upload with no CVEs listed. You should fix that."; \
+			exit 1; \
+		} \
+	} || true
+	# use system node w/out patching source; upstream hardcodes x64 in path
+	mkdir -p third_party/node/linux/node-linux-x64/bin
+	cp /usr/bin/node third_party/node/linux/node-linux-x64/bin
+	# use system rollup
+	cp -ra /usr/share/nodejs/rollup third_party/node/node_modules/
+	# output compiler information
+	$(CXX) --version
+	# prefer unbundled (system) libraries
+	./debian/scripts/unbundle
+
+override_dh_auto_build-arch:
+	gn gen out/Release --args="$(defines)"
+	ninja -j$(njobs) -C out/Release chrome chrome_sandbox
+	cp out/Release/chrome out/Release/chromium
+	cp out/Release/chrome_sandbox out/Release/chrome-sandbox
+	cp out/Release/locales/en-US.pak out/Release/resources
+	chmod 4755 out/Release/chrome-sandbox # suid sandbox
+	sed -e s/@@PACKAGE@@/chromium/g -e s/@@MENUNAME@@/chromium/g \
+	    < chrome/app/resources/manpage.1.in > out/Release/chromium.1
+
+override_dh_auto_build-indep:
+	gn gen out/Release --args="$(defines)"
+	ninja -j$(njobs) -C out/Release packed_resources
+	rm -f out/Release/locales/en-US.pak
+
+override_dh_auto_install-arch:
+	dh_auto_install
+	# update launcher script with build information
+	sed 's|@BUILD_DIST@|$(shell . /etc/os-release && echo "$$PRETTY_NAME")|' \
+	    < debian/scripts/chromium > debian/org.mojo.browser/opt/apps/org.mojo.browser/files/browser
+	# change to executable
+	chmod 755 debian/org.mojo.browser/opt/apps/org.mojo.browser/files/browser
+	# move icons into /usr/share
+	./debian/scripts/icons
+
+override_dh_fixperms:
+	dh_fixperms --exclude chrome-sandbox
+
+override_dh_auto_clean:
+	rm -rf debian/bindgen/root
+	rm -rf third_party/node/linux/node-linux-x64
+	rm -rf out
+	rm -rf third_party/node/node_modules/rollup
+	# bullseye workarounds; delete this post-bullseye
+	rm -rf third_party/node/node_modules/acorn
+	rm -rf third_party/node/node_modules/walk
+	find . -name \*.pyc -execdir rm -f {} \;
+	dh_auto_clean
+
+###################### upstream source downloading ############################
+
+url=https://gsdview.appspot.com/chromium-browser-official
+version=$(shell dpkg-parsechangelog -S Version | sed s/-.*//)
+extract=chromium-$(version)
+tarfile=$(extract).tar
+tarball=$(tarfile).xz
+debvers=../chromium_$(version)
+seconds=$(debvers).seconds
+origtxz=$(debvers).orig.tar.xz
+removed=$(debvers).files-removed
+options=--sort=name --owner=0 --group=0 --numeric-owner --mtime="@$$(stat --format "%Y" ../$(tarball))" --clamp-mtime
+
+get-orig-source:
+	wget -nv --show-progress -c $(url)/$(tarball) -O ../$(tarball)
+	@date +%s > $(seconds)
+	# TODO: use `grep-dctrl -F Files-Excluded '' -s Files-Excluded debian/copyright` instead (from jochensp)
+	perl debian/scripts/get-excludes.pl "`tar tf ../$(tarball) | head -n1`" > $(debvers).excludes
+	@echo $$(($$(date +%s) - $$(cat $(seconds)))) seconds
+	@echo
+	test ! -e $(extract) || rm -rf $(extract)
+	tar --exclude-from=$(debvers).excludes -xf ../$(tarball)
+	@echo $$(($$(date +%s) - $$(cat $(seconds)))) seconds
+	@echo
+	rm -f $(debvers).excludes
+	cd $(extract) && ../debian/scripts/check-upstream
+	@echo $$(($$(date +%s) - $$(cat $(seconds)))) seconds
+	@echo
+	test ! -e $(origtxz) || rm -f $(origtxz)
+	tar $(options) -cf - $(extract) | xz -6 -T0 - > $(origtxz)
+	@echo $$(($$(date +%s) - $$(cat $(seconds)))) seconds
+	@echo
+	rm -rf $(extract)
+	@echo $$(($$(date +%s) - $$(cat $(seconds)))) seconds | tee seconds
+	@mv -f seconds $(seconds)
