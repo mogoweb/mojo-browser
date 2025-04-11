@@ -1,0 +1,89 @@
+From 0d1a2e1ea0d10aafcac8121630db783ed893a6ef Mon Sep 17 00:00:00 2001
+From: mogoweb <mogoweb@gmail.com>
+Date: Fri, 11 Apr 2025 23:48:22 +0800
+Subject: [PATCH] modify product name to Mojo Browser
+
+---
+ chrome/app/chromium_strings.grd                 | 10 +++++-----
+ chrome/app/resources/chromium_strings_zh-CN.xtb |  4 ++++
+ chrome/app/resources/chromium_strings_zh-HK.xtb |  4 ++++
+ chrome/app/resources/chromium_strings_zh-TW.xtb |  4 ++++
+ 4 files changed, 17 insertions(+), 5 deletions(-)
+
+diff --git a/chrome/app/chromium_strings.grd b/chrome/app/chromium_strings.grd
+index fce18aeacd..7cc4f9d391 100644
+--- a/chrome/app/chromium_strings.grd
++++ b/chrome/app/chromium_strings.grd
+@@ -293,11 +293,11 @@ If you update this file, be sure also to update google_chrome_strings.grd. -->
+           </message>
+         </then>
+         <else>
+-          <message name="IDS_PRODUCT_NAME" desc="The Chrome application name" translateable="false">
+-            Chromium
++          <message name="IDS_PRODUCT_NAME" desc="The Chrome application name">
++            Mojo Browser
+           </message>
+-          <message name="IDS_SHORT_PRODUCT_NAME" desc="The Chrome application short name." translateable="false">
+-            Chromium
++          <message name="IDS_SHORT_PRODUCT_NAME" desc="The Chrome application short name.">
++            Mojo Browser
+           </message>
+         </else>
+       </if>
+@@ -910,7 +910,7 @@ Permissions you've already given to websites and apps may apply to this account.
+           </then>
+           <else>
+             <message name="IDS_ABOUT" desc="In Title Case: The text label of the About Chrome menu item">
+-              About &amp;Chromium
++              About &amp;Mojo Browser
+             </message>
+           </else>
+         </if>
+diff --git a/chrome/app/resources/chromium_strings_zh-CN.xtb b/chrome/app/resources/chromium_strings_zh-CN.xtb
+index f94c1322c0..2abc3c6b70 100644
+--- a/chrome/app/resources/chromium_strings_zh-CN.xtb
++++ b/chrome/app/resources/chromium_strings_zh-CN.xtb
+@@ -1,6 +1,10 @@
+ <?xml version="1.0" ?>
+ <!DOCTYPE translationbundle>
+ <translationbundle lang="zh-CN">
++<!-- mojo -->
++<translation id="6039343188418195864">墨舟浏览器</translation>
++<translation id="5019842783866056140">关于墨舟浏览器</translation>
++
+ <translation id="1026101648481255140">继续安装</translation>
+ <translation id="1029669172902658969">重新启动以更新 Chromium 操作系统(&amp;C)</translation>
+ <translation id="1040916596585577953">Chromium 建议您检查此扩展程序</translation>
+diff --git a/chrome/app/resources/chromium_strings_zh-HK.xtb b/chrome/app/resources/chromium_strings_zh-HK.xtb
+index 3dabcd6d3d..59dca55386 100644
+--- a/chrome/app/resources/chromium_strings_zh-HK.xtb
++++ b/chrome/app/resources/chromium_strings_zh-HK.xtb
+@@ -1,6 +1,10 @@
+ <?xml version="1.0" ?>
+ <!DOCTYPE translationbundle>
+ <translationbundle lang="zh-HK">
++<!-- mojo -->
++<translation id="6039343188418195864">墨舟瀏覽器</translation>
++<translation id="5019842783866056140">關於墨舟瀏覽器</translation>
++
+ <translation id="1026101648481255140">繼續安裝</translation>
+ <translation id="1029669172902658969">重新啟動以更新 &amp;Chromium 作業系統</translation>
+ <translation id="1040916596585577953">Chromium 建議你審核此擴充程式</translation>
+diff --git a/chrome/app/resources/chromium_strings_zh-TW.xtb b/chrome/app/resources/chromium_strings_zh-TW.xtb
+index 04eb4d4c4a..a512ac184d 100644
+--- a/chrome/app/resources/chromium_strings_zh-TW.xtb
++++ b/chrome/app/resources/chromium_strings_zh-TW.xtb
+@@ -1,6 +1,10 @@
+ <?xml version="1.0" ?>
+ <!DOCTYPE translationbundle>
+ <translationbundle lang="zh-TW">
++<!-- mojo -->
++<translation id="6039343188418195864">墨舟瀏覽器</translation>
++<translation id="5019842783866056140">關於墨舟瀏覽器</translation>
++
+ <translation id="1026101648481255140">繼續安裝</translation>
+ <translation id="1029669172902658969">重新啟動以更新 Chromium OS(&amp;C)</translation>
+ <translation id="1040916596585577953">Chromium 建議你檢查這項擴充功能</translation>
+-- 
+2.45.2
+

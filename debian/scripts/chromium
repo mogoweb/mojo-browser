@@ -87,7 +87,7 @@ fi
 export CHROME_DESKTOP="org.mojo.browser.desktop"
 
 # Set CHROME_VERSION_EXTRA text, which is displayed in the About dialog
-export CHROME_VERSION_EXTRA="built on @BUILD_DIST@"
+export CHROME_VERSION_EXTRA=" | @MOJO_VERSION@"
 
 want_debug=0
 want_temp_profile=0

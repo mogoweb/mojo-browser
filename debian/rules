@@ -187,7 +187,7 @@ override_dh_auto_build-indep:
 override_dh_auto_install-arch:
 	dh_auto_install
 	# update launcher script with build information
-	sed 's|@BUILD_DIST@|$(shell . /etc/os-release && echo "$$PRETTY_NAME")|' \
+	sed 's|@MOJO_VERSION@|$(shell dpkg-parsechangelog -S Version | sed s/-.*//)|' \
 	    < debian/scripts/chromium > debian/org.mojo.browser/opt/apps/org.mojo.browser/files/browser
 	# change to executable
 	chmod 755 debian/org.mojo.browser/opt/apps/org.mojo.browser/files/browser
