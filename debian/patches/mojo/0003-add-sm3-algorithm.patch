@@ -1,0 +1,1595 @@
+From 441d9b64ecd32d42538a0bbc4df17e5a3b244a46 Mon Sep 17 00:00:00 2001
+From: mogoweb <mogoweb@gmail.com>
+Date: Mon, 14 Apr 2025 00:00:52 +0800
+Subject: [PATCH] add sm3 algorithm
+
+---
+ third_party/boringssl/BUILD.generated.gni     |   3 +
+ third_party/boringssl/src/build.json          |   4 +
+ .../src/crypto/digest_extra/digest_extra.c    |   1 +
+ .../src/crypto/digest_extra/digest_test.cc    |   6 +
+ .../boringssl/src/crypto/evp/evp_test.cc      |   2 +
+ .../src/crypto/fipsmodule/digest/digests.c    |  24 ++
+ .../src/crypto/hmac_extra/hmac_test.cc        |   2 +
+ .../src/crypto/hmac_extra/hmac_tests.txt      |   5 +
+ .../boringssl/src/crypto/obj/obj_dat.h        | 259 +++++++++++++++++-
+ .../boringssl/src/crypto/obj/obj_mac.num      |  20 ++
+ .../boringssl/src/crypto/obj/obj_xref.c       |   1 +
+ .../boringssl/src/crypto/obj/objects.txt      |  33 +++
+ third_party/boringssl/src/crypto/sm3/sm3.c    | 204 ++++++++++++++
+ .../boringssl/src/crypto/sm3/sm3_local.h      | 253 +++++++++++++++++
+ .../boringssl/src/crypto/sm3/sm3_test.cc      |  66 +++++
+ third_party/boringssl/src/gen/sources.bzl     |   4 +
+ third_party/boringssl/src/gen/sources.cmake   |   4 +
+ third_party/boringssl/src/gen/sources.json    |   4 +
+ .../boringssl/src/include/openssl/digest.h    |   1 +
+ .../boringssl/src/include/openssl/nid.h       |  97 +++++++
+ .../src/include/openssl/opensslconf.h         |   6 +-
+ .../boringssl/src/include/openssl/sm3.h       |  49 ++++
+ third_party/boringssl/src/tool/digest.cc      |   4 +
+ third_party/boringssl/src/tool/internal.h     |   1 +
+ third_party/boringssl/src/tool/tool.cc        |   1 +
+ 25 files changed, 1049 insertions(+), 5 deletions(-)
+ create mode 100644 third_party/boringssl/src/crypto/sm3/sm3.c
+ create mode 100644 third_party/boringssl/src/crypto/sm3/sm3_local.h
+ create mode 100644 third_party/boringssl/src/crypto/sm3/sm3_test.cc
+ create mode 100644 third_party/boringssl/src/include/openssl/sm3.h
+
+diff --git a/third_party/boringssl/BUILD.generated.gni b/third_party/boringssl/BUILD.generated.gni
+index 4fe6a262ba..072ae39ecc 100644
+--- a/third_party/boringssl/BUILD.generated.gni
++++ b/third_party/boringssl/BUILD.generated.gni
+@@ -213,6 +213,8 @@ crypto_sources = [
+   "src/crypto/rsa_extra/rsa_crypt.c",
+   "src/crypto/rsa_extra/rsa_print.c",
+   "src/crypto/siphash/siphash.c",
++  "src/crypto/sm3/sm3_local.h",
++  "src/crypto/sm3/sm3.c",
+   "src/crypto/spx/address.c",
+   "src/crypto/spx/address.h",
+   "src/crypto/spx/fors.c",
+@@ -559,6 +561,7 @@ crypto_headers = [
+   "src/include/openssl/service_indicator.h",
+   "src/include/openssl/sha.h",
+   "src/include/openssl/siphash.h",
++  "src/include/openssl/sm3.h",
+   "src/include/openssl/span.h",
+   "src/include/openssl/stack.h",
+   "src/include/openssl/target.h",
+diff --git a/third_party/boringssl/src/build.json b/third_party/boringssl/src/build.json
+index 3f4ac1a6d0..1f032c08c8 100644
+--- a/third_party/boringssl/src/build.json
++++ b/third_party/boringssl/src/build.json
+@@ -302,6 +302,7 @@
+             "crypto/rsa_extra/rsa_asn1.c",
+             "crypto/rsa_extra/rsa_crypt.c",
+             "crypto/rsa_extra/rsa_print.c",
++            "crypto/sm3/sm3.c",
+             "crypto/spx/address.c",
+             "crypto/spx/fors.c",
+             "crypto/spx/merkle.c",
+@@ -463,6 +464,7 @@
+             "include/openssl/service_indicator.h",
+             "include/openssl/sha.h",
+             "include/openssl/siphash.h",
++            "include/openssl/sm3.h",
+             "include/openssl/span.h",
+             "include/openssl/stack.h",
+             "include/openssl/target.h",
+@@ -525,6 +527,7 @@
+             "crypto/poly1305/internal.h",
+             "crypto/pool/internal.h",
+             "crypto/rsa_extra/internal.h",
++            "crypto/sm3/sm3_local.h",
+             "crypto/spx/address.h",
+             "crypto/spx/fors.h",
+             "crypto/spx/merkle.h",
+@@ -848,6 +851,7 @@
+             "crypto/self_test.cc",
+             "crypto/stack/stack_test.cc",
+             "crypto/siphash/siphash_test.cc",
++            "crypto/sm3/sm3_test.cc",
+             "crypto/spx/spx_test.cc",
+             "crypto/thread_test.cc",
+             "crypto/test/gtest_main.cc",
+diff --git a/third_party/boringssl/src/crypto/digest_extra/digest_extra.c b/third_party/boringssl/src/crypto/digest_extra/digest_extra.c
+index f575035495..de6ae8f52c 100644
+--- a/third_party/boringssl/src/crypto/digest_extra/digest_extra.c
++++ b/third_party/boringssl/src/crypto/digest_extra/digest_extra.c
+@@ -85,6 +85,7 @@ static const struct nid_to_digest nid_to_digest_mapping[] = {
+     {NID_sha512, EVP_sha512, SN_sha512, LN_sha512},
+     {NID_sha512_256, EVP_sha512_256, SN_sha512_256, LN_sha512_256},
+     {NID_md5_sha1, EVP_md5_sha1, SN_md5_sha1, LN_md5_sha1},
++    {NID_sm3, EVP_sm3, SN_sm3, LN_sm3},
+     // As a remnant of signing |EVP_MD|s, OpenSSL returned the corresponding
+     // hash function when given a signature OID. To avoid unintended lax parsing
+     // of hash OIDs, this is no longer supported for lookup by OID or NID.
+diff --git a/third_party/boringssl/src/crypto/digest_extra/digest_test.cc b/third_party/boringssl/src/crypto/digest_extra/digest_test.cc
+index d15e4d1086..89085ac6c9 100644
+--- a/third_party/boringssl/src/crypto/digest_extra/digest_test.cc
++++ b/third_party/boringssl/src/crypto/digest_extra/digest_test.cc
+@@ -31,6 +31,7 @@
+ #include <openssl/nid.h>
+ #include <openssl/obj.h>
+ #include <openssl/sha.h>
++#include <openssl/sm3.h>
+ 
+ #include "../internal.h"
+ #include "../test/test_util.h"
+@@ -56,6 +57,7 @@ static const MD sha512 = { "SHA512", &EVP_sha512, &SHA512 };
+ static const MD sha512_256 = { "SHA512-256", &EVP_sha512_256, &SHA512_256 };
+ static const MD md5_sha1 = { "MD5-SHA1", &EVP_md5_sha1, nullptr };
+ static const MD blake2b256 = { "BLAKE2b-256", &EVP_blake2b256, nullptr };
++static const MD sm3 = { "SM3", &EVP_sm3, &SM3 };
+ 
+ struct DigestTestVector {
+   // md is the digest to test.
+@@ -150,6 +152,10 @@ static const DigestTestVector kTestVectors[] = {
+     // BLAKE2b-256 tests.
+     {blake2b256, "abc", 1,
+      "bddd813c634239723171ef3fee98579b94964e3bb1cb3e427262c8c068d52319"},
++    
++    // SM3 tests
++    {sm3, "abc", 1,
++     "66c7f0f462eeedd9d1f2d46bdc10e4e24167c4875cf2f7a2297da02b8f4ba8e0"},
+ };
+ 
+ static void CompareDigest(const DigestTestVector *test,
+diff --git a/third_party/boringssl/src/crypto/evp/evp_test.cc b/third_party/boringssl/src/crypto/evp/evp_test.cc
+index 9189d25973..35a56c7640 100644
+--- a/third_party/boringssl/src/crypto/evp/evp_test.cc
++++ b/third_party/boringssl/src/crypto/evp/evp_test.cc
+@@ -102,6 +102,8 @@ static const EVP_MD *GetDigest(FileTest *t, const std::string &name) {
+     return EVP_sha384();
+   } else if (name == "SHA512") {
+     return EVP_sha512();
++  } else if (name == "SM3") {
++    return EVP_sm3();
+   }
+   ADD_FAILURE() << "Unknown digest: " << name;
+   return nullptr;
+diff --git a/third_party/boringssl/src/crypto/fipsmodule/digest/digests.c b/third_party/boringssl/src/crypto/fipsmodule/digest/digests.c
+index f006ebbc53..91e05bfe7c 100644
+--- a/third_party/boringssl/src/crypto/fipsmodule/digest/digests.c
++++ b/third_party/boringssl/src/crypto/fipsmodule/digest/digests.c
+@@ -63,6 +63,7 @@
+ #include <openssl/md5.h>
+ #include <openssl/nid.h>
+ #include <openssl/sha.h>
++#include <openssl/sm3.h>
+ 
+ #include "internal.h"
+ #include "../delocate.h"
+@@ -301,4 +302,27 @@ DEFINE_METHOD_FUNCTION(EVP_MD, EVP_md5_sha1) {
+   out->ctx_size = sizeof(MD5_SHA1_CTX);
+ }
+ 
++static void sm3_init(EVP_MD_CTX *ctx) {
++  CHECK(SM3_Init(ctx->md_data));
++}
++
++static void sm3_update(EVP_MD_CTX *ctx, const void *data, size_t count) {
++  CHECK(SM3_Update(ctx->md_data, data, count));
++}
++
++static void sm3_final(EVP_MD_CTX *ctx, uint8_t *out) {
++  CHECK(SM3_Final(out, ctx->md_data));
++}
++
++DEFINE_METHOD_FUNCTION(EVP_MD, EVP_sm3) {
++  out->type = NID_sm3;
++  out->md_size = SM3_DIGEST_LENGTH;
++  out->flags = 0;
++  out->init = sm3_init;
++  out->update = sm3_update;
++  out->final = sm3_final;
++  out->block_size = 64;
++  out->ctx_size = sizeof(SM3_CTX);
++}
++
+ #undef CHECK
+diff --git a/third_party/boringssl/src/crypto/hmac_extra/hmac_test.cc b/third_party/boringssl/src/crypto/hmac_extra/hmac_test.cc
+index 4c0d2a102f..0f8973a785 100644
+--- a/third_party/boringssl/src/crypto/hmac_extra/hmac_test.cc
++++ b/third_party/boringssl/src/crypto/hmac_extra/hmac_test.cc
+@@ -81,6 +81,8 @@ static const EVP_MD *GetDigest(const std::string &name) {
+     return EVP_sha384();
+   } else if (name == "SHA512") {
+     return EVP_sha512();
++  } else if (name == "SM3") {
++    return EVP_sm3();
+   }
+   return nullptr;
+ }
+diff --git a/third_party/boringssl/src/crypto/hmac_extra/hmac_tests.txt b/third_party/boringssl/src/crypto/hmac_extra/hmac_tests.txt
+index 1339b5b395..9916138f25 100644
+--- a/third_party/boringssl/src/crypto/hmac_extra/hmac_tests.txt
++++ b/third_party/boringssl/src/crypto/hmac_extra/hmac_tests.txt
+@@ -123,3 +123,8 @@ HMAC = SHA1
+ Input = "My test data"
+ Key = "12345"
+ Output = 7dbe8c764c068e3bcd6e6b0fbcd5e6fc197b15bb
++
++HMAC = SM3
++Input = "abc"
++Key = "11223344556677881122334455667788"
++Output = d5a1579fd138f384e6eb7179324e42c67d0e7f8f5595eecf285b88f2f495575c
+\ No newline at end of file
+diff --git a/third_party/boringssl/src/crypto/obj/obj_dat.h b/third_party/boringssl/src/crypto/obj/obj_dat.h
+index 71ef2d2bdc..16eec418a1 100644
+--- a/third_party/boringssl/src/crypto/obj/obj_dat.h
++++ b/third_party/boringssl/src/crypto/obj/obj_dat.h
+@@ -57,7 +57,7 @@
+ /* This file is generated by crypto/obj/objects.go. */
+ 
+ 
+-#define NUM_NID 965
++#define NUM_NID 985
+ 
+ static const uint8_t kObjectData[] = {
+     /* NID_rsadsi */
+@@ -7137,6 +7137,178 @@ static const uint8_t kObjectData[] = {
+     0x04,
+     0x02,
+     0x06,
++    /* NID_ISO_CN */
++    0x2a,
++    0x81,
++    0x1c,
++    /* NID_oscca */
++    0x2a,
++    0x81,
++    0x1c,
++    0xcf,
++    0x55,
++    /* NID_sm_scheme */
++    0x2a,
++    0x81,
++    0x1c,
++    0xcf,
++    0x55,
++    0x01,
++    /* NID_sm2 */
++    0x2a,
++    0x81,
++    0x1c,
++    0xcf,
++    0x55,
++    0x01,
++    0x82,
++    0x2d,
++    /* NID_sm3 */
++    0x2a,
++    0x81,
++    0x1c,
++    0xcf,
++    0x55,
++    0x01,
++    0x83,
++    0x11,
++    /* NID_sm3WithRSAEncryption */
++    0x2a,
++    0x81,
++    0x1c,
++    0xcf,
++    0x55,
++    0x01,
++    0x83,
++    0x78,
++    /* NID_SM2_with_SM3 */
++    0x2a,
++    0x81,
++    0x1c,
++    0xcf,
++    0x55,
++    0x01,
++    0x83,
++    0x75,
++    /* NID_hmacWithSM3 */
++    0x2a,
++    0x81,
++    0x1c,
++    0xcf,
++    0x55,
++    0x01,
++    0x83,
++    0x11,
++    0x03,
++    0x01,
++    /* NID_zuc */
++    0x2a,
++    0x81,
++    0x1c,
++    0xcf,
++    0x55,
++    0x01,
++    0x81,
++    0x49,
++    /* NID_zuc_128_eea3 */
++    0x2a,
++    0x81,
++    0x1c,
++    0xcf,
++    0x55,
++    0x01,
++    0x86,
++    0x21,
++    /* NID_zuc_128_eia3 */
++    0x2a,
++    0x81,
++    0x1c,
++    0xcf,
++    0x55,
++    0x01,
++    0x86,
++    0x22,
++    /* NID_sm4_ecb */
++    0x2a,
++    0x81,
++    0x1c,
++    0xcf,
++    0x55,
++    0x01,
++    0x68,
++    0x01,
++    /* NID_sm4_cbc */
++    0x2a,
++    0x81,
++    0x1c,
++    0xcf,
++    0x55,
++    0x01,
++    0x68,
++    0x02,
++    /* NID_sm4_ofb128 */
++    0x2a,
++    0x81,
++    0x1c,
++    0xcf,
++    0x55,
++    0x01,
++    0x68,
++    0x03,
++    /* NID_sm4_cfb128 */
++    0x2a,
++    0x81,
++    0x1c,
++    0xcf,
++    0x55,
++    0x01,
++    0x68,
++    0x04,
++    /* NID_sm4_cfb1 */
++    0x2a,
++    0x81,
++    0x1c,
++    0xcf,
++    0x55,
++    0x01,
++    0x68,
++    0x05,
++    /* NID_sm4_cfb8 */
++    0x2a,
++    0x81,
++    0x1c,
++    0xcf,
++    0x55,
++    0x01,
++    0x68,
++    0x06,
++    /* NID_sm4_ctr */
++    0x2a,
++    0x81,
++    0x1c,
++    0xcf,
++    0x55,
++    0x01,
++    0x68,
++    0x07,
++    /* NID_sm4_gcm */
++    0x2a,
++    0x81,
++    0x1c,
++    0xcf,
++    0x55,
++    0x01,
++    0x68,
++    0x08,
++    /* NID_sm4_ccm */
++    0x2a,
++    0x81,
++    0x1c,
++    0xcf,
++    0x55,
++    0x01,
++    0x68,
++    0x09,
+ };
+ 
+ static const ASN1_OBJECT kObjects[NUM_NID] = {
+@@ -8783,6 +8955,29 @@ static const ASN1_OBJECT kObjects[NUM_NID] = {
+     {"HKDF", "hkdf", NID_hkdf, 0, NULL, 0},
+     {"X25519Kyber768Draft00", "X25519Kyber768Draft00",
+      NID_X25519Kyber768Draft00, 0, NULL, 0},
++    {"ISO-CN", "ISO CN Member Body", NID_ISO_CN, 3, &kObjectData[6196], 0},
++    {"oscca", "oscca", NID_oscca, 5, &kObjectData[6199], 0},
++    {"sm-scheme", "sm-scheme", NID_sm_scheme, 6, &kObjectData[6204], 0},
++    {"SM2", "sm2", NID_sm2, 8, &kObjectData[6210], 0},
++    {"SM3", "sm3", NID_sm3, 8, &kObjectData[6218], 0},
++    {"RSA-SM3", "sm3WithRSAEncryption", NID_sm3WithRSAEncryption, 8,
++     &kObjectData[6226], 0},
++    {"SM2-SM3", "SM2-with-SM3", NID_SM2_with_SM3, 8, &kObjectData[6234], 0},
++    {"hmacWithSM3", "hmacWithSM3", NID_hmacWithSM3, 10, &kObjectData[6242], 0},
++    {"ZUC", "zuc", NID_zuc, 8, &kObjectData[6252], 0},
++    {"ZUC-128-EEA3", "zuc-128-eea3", NID_zuc_128_eea3, 8, &kObjectData[6260],
++     0},
++    {"ZUC-128-EIA3", "zuc-128-eia3", NID_zuc_128_eia3, 8, &kObjectData[6268],
++     0},
++    {"SM4-ECB", "sm4-ecb", NID_sm4_ecb, 8, &kObjectData[6276], 0},
++    {"SM4-CBC", "sm4-cbc", NID_sm4_cbc, 8, &kObjectData[6284], 0},
++    {"SM4-OFB", "sm4-ofb", NID_sm4_ofb128, 8, &kObjectData[6292], 0},
++    {"SM4-CFB", "sm4-cfb", NID_sm4_cfb128, 8, &kObjectData[6300], 0},
++    {"SM4-CFB1", "sm4-cfb1", NID_sm4_cfb1, 8, &kObjectData[6308], 0},
++    {"SM4-CFB8", "sm4-cfb8", NID_sm4_cfb8, 8, &kObjectData[6316], 0},
++    {"SM4-CTR", "sm4-ctr", NID_sm4_ctr, 8, &kObjectData[6324], 0},
++    {"SM4-GCM", "sm4-gcm", NID_sm4_gcm, 8, &kObjectData[6332], 0},
++    {"SM4-CCM", "sm4-ccm", NID_sm4_ccm, 8, &kObjectData[6340], 0},
+ };
+ 
+ static const uint16_t kNIDsInShortNameOrder[] = {
+@@ -8889,6 +9084,7 @@ static const uint16_t kNIDsInShortNameOrder[] = {
+     36 /* IDEA-ECB */,
+     46 /* IDEA-OFB */,
+     181 /* ISO */,
++    965 /* ISO-CN */,
+     183 /* ISO-US */,
+     645 /* ITU-T */,
+     646 /* JOINT-ISO-ITU-T */,
+@@ -8960,6 +9156,7 @@ static const uint16_t kNIDsInShortNameOrder[] = {
+     668 /* RSA-SHA256 */,
+     669 /* RSA-SHA384 */,
+     670 /* RSA-SHA512 */,
++    970 /* RSA-SM3 */,
+     919 /* RSAES-OAEP */,
+     912 /* RSASSA-PSS */,
+     777 /* SEED-CBC */,
+@@ -8973,6 +9170,18 @@ static const uint16_t kNIDsInShortNameOrder[] = {
+     673 /* SHA384 */,
+     674 /* SHA512 */,
+     962 /* SHA512-256 */,
++    968 /* SM2 */,
++    971 /* SM2-SM3 */,
++    969 /* SM3 */,
++    977 /* SM4-CBC */,
++    984 /* SM4-CCM */,
++    979 /* SM4-CFB */,
++    980 /* SM4-CFB1 */,
++    981 /* SM4-CFB8 */,
++    982 /* SM4-CTR */,
++    976 /* SM4-ECB */,
++    983 /* SM4-GCM */,
++    978 /* SM4-OFB */,
+     188 /* SMIME */,
+     167 /* SMIME-CAPS */,
+     100 /* SN */,
+@@ -8988,6 +9197,9 @@ static const uint16_t kNIDsInShortNameOrder[] = {
+     184 /* X9-57 */,
+     185 /* X9cm */,
+     125 /* ZLIB */,
++    973 /* ZUC */,
++    974 /* ZUC-128-EEA3 */,
++    975 /* ZUC-128-EIA3 */,
+     478 /* aRecord */,
+     289 /* aaControls */,
+     287 /* ac-auditEntity */,
+@@ -9144,6 +9356,7 @@ static const uint16_t kNIDsInShortNameOrder[] = {
+     799 /* hmacWithSHA256 */,
+     800 /* hmacWithSHA384 */,
+     801 /* hmacWithSHA512 */,
++    972 /* hmacWithSM3 */,
+     432 /* holdInstructionCallIssuer */,
+     430 /* holdInstructionCode */,
+     431 /* holdInstructionNone */,
+@@ -9447,6 +9660,7 @@ static const uint16_t kNIDsInShortNameOrder[] = {
+     77 /* nsSslServerName */,
+     681 /* onBasis */,
+     491 /* organizationalStatus */,
++    966 /* oscca */,
+     475 /* otherMailbox */,
+     876 /* owner */,
+     489 /* pagerTelephoneNumber */,
+@@ -9693,6 +9907,7 @@ static const uint16_t kNIDsInShortNameOrder[] = {
+     52 /* signingTime */,
+     454 /* simpleSecurityObject */,
+     496 /* singleLevelQuality */,
++    967 /* sm-scheme */,
+     387 /* snmpv2 */,
+     660 /* street */,
+     85 /* subjectAltName */,
+@@ -9788,6 +10003,7 @@ static const uint16_t kNIDsInLongNameOrder[] = {
+     294 /* IPSec End System */,
+     295 /* IPSec Tunnel */,
+     296 /* IPSec User */,
++    965 /* ISO CN Member Body */,
+     182 /* ISO Member Body */,
+     183 /* ISO US Member Body */,
+     667 /* Independent */,
+@@ -9840,6 +10056,7 @@ static const uint16_t kNIDsInLongNameOrder[] = {
+     2 /* RSA Data Security, Inc. PKCS */,
+     188 /* S/MIME */,
+     167 /* S/MIME Capabilities */,
++    971 /* SM2-with-SM3 */,
+     387 /* SNMPv2 */,
+     512 /* Secure Electronic Transactions */,
+     386 /* Security */,
+@@ -10108,6 +10325,7 @@ static const uint16_t kNIDsInLongNameOrder[] = {
+     799 /* hmacWithSHA256 */,
+     800 /* hmacWithSHA384 */,
+     801 /* hmacWithSHA512 */,
++    972 /* hmacWithSM3 */,
+     486 /* homePostalAddress */,
+     473 /* homeTelephoneNumber */,
+     466 /* host */,
+@@ -10379,6 +10597,7 @@ static const uint16_t kNIDsInLongNameOrder[] = {
+     17 /* organizationName */,
+     491 /* organizationalStatus */,
+     18 /* organizationalUnitName */,
++    966 /* oscca */,
+     475 /* otherMailbox */,
+     876 /* owner */,
+     935 /* pSpecified */,
+@@ -10653,6 +10872,19 @@ static const uint16_t kNIDsInLongNameOrder[] = {
+     52 /* signingTime */,
+     454 /* simpleSecurityObject */,
+     496 /* singleLevelQuality */,
++    967 /* sm-scheme */,
++    968 /* sm2 */,
++    969 /* sm3 */,
++    970 /* sm3WithRSAEncryption */,
++    977 /* sm4-cbc */,
++    984 /* sm4-ccm */,
++    979 /* sm4-cfb */,
++    980 /* sm4-cfb1 */,
++    981 /* sm4-cfb8 */,
++    982 /* sm4-ctr */,
++    976 /* sm4-ecb */,
++    983 /* sm4-gcm */,
++    978 /* sm4-ofb */,
+     16 /* stateOrProvinceName */,
+     660 /* streetAddress */,
+     498 /* subtreeMaximumQuality */,
+@@ -10695,13 +10927,16 @@ static const uint16_t kNIDsInLongNameOrder[] = {
+     158 /* x509Certificate */,
+     160 /* x509Crl */,
+     125 /* zlib compression */,
++    973 /* zuc */,
++    974 /* zuc-128-eea3 */,
++    975 /* zuc-128-eia3 */,
+ };
+ 
+ static const uint16_t kNIDsInOIDOrder[] = {
+     434 /* 0.9 (OBJ_data) */,
+     182 /* 1.2 (OBJ_member_body) */,
+-    379 /* 1.3 (OBJ_org) */,
+     676 /* 1.3 (OBJ_identified_organization) */,
++    379 /* 1.3 (OBJ_org) */,
+     11 /* 2.5 (OBJ_X500) */,
+     647 /* 2.23 (OBJ_international_organizations) */,
+     380 /* 1.3.6 (OBJ_dod) */,
+@@ -10711,6 +10946,7 @@ static const uint16_t kNIDsInOIDOrder[] = {
+     512 /* 2.23.42 (OBJ_id_set) */,
+     678 /* 2.23.43 (OBJ_wap) */,
+     435 /* 0.9.2342 (OBJ_pss) */,
++    965 /* 1.2.156 (OBJ_ISO_CN) */,
+     183 /* 1.2.840 (OBJ_ISO_US) */,
+     381 /* 1.3.6.1 (OBJ_iana) */,
+     948 /* 1.3.101.110 (OBJ_X25519) */,
+@@ -10930,6 +11166,7 @@ static const uint16_t kNIDsInOIDOrder[] = {
+     637 /* 2.23.42.8.30 (OBJ_set_brand_Diners) */,
+     638 /* 2.23.42.8.34 (OBJ_set_brand_AmericanExpress) */,
+     639 /* 2.23.42.8.35 (OBJ_set_brand_JCB) */,
++    966 /* 1.2.156.10197 (OBJ_oscca) */,
+     805 /* 1.2.643.2.2 (OBJ_cryptopro) */,
+     806 /* 1.2.643.2.9 (OBJ_cryptocom) */,
+     184 /* 1.2.840.10040 (OBJ_X9_57) */,
+@@ -11003,6 +11240,7 @@ static const uint16_t kNIDsInOIDOrder[] = {
+     744 /* 2.23.43.1.4.11 (OBJ_wap_wsg_idm_ecid_wtls11) */,
+     745 /* 2.23.43.1.4.12 (OBJ_wap_wsg_idm_ecid_wtls12) */,
+     804 /* 1.0.10118.3.0.55 (OBJ_whirlpool) */,
++    967 /* 1.2.156.10197.1 (OBJ_sm_scheme) */,
+     773 /* 1.2.410.200004 (OBJ_kisa) */,
+     807 /* 1.2.643.2.2.3 (OBJ_id_GostR3411_94_with_GostR3410_2001) */,
+     808 /* 1.2.643.2.2.4 (OBJ_id_GostR3411_94_with_GostR3410_94) */,
+@@ -11110,6 +11348,22 @@ static const uint16_t kNIDsInOIDOrder[] = {
+     768 /* 0.3.4401.5.3.1.9.43 (OBJ_camellia_256_ofb128) */,
+     759 /* 0.3.4401.5.3.1.9.44 (OBJ_camellia_256_cfb128) */,
+     437 /* 0.9.2342.19200300.100 (OBJ_pilot) */,
++    976 /* 1.2.156.10197.1.104.1 (OBJ_sm4_ecb) */,
++    977 /* 1.2.156.10197.1.104.2 (OBJ_sm4_cbc) */,
++    978 /* 1.2.156.10197.1.104.3 (OBJ_sm4_ofb128) */,
++    979 /* 1.2.156.10197.1.104.4 (OBJ_sm4_cfb128) */,
++    980 /* 1.2.156.10197.1.104.5 (OBJ_sm4_cfb1) */,
++    981 /* 1.2.156.10197.1.104.6 (OBJ_sm4_cfb8) */,
++    982 /* 1.2.156.10197.1.104.7 (OBJ_sm4_ctr) */,
++    983 /* 1.2.156.10197.1.104.8 (OBJ_sm4_gcm) */,
++    984 /* 1.2.156.10197.1.104.9 (OBJ_sm4_ccm) */,
++    973 /* 1.2.156.10197.1.201 (OBJ_zuc) */,
++    968 /* 1.2.156.10197.1.301 (OBJ_sm2) */,
++    969 /* 1.2.156.10197.1.401 (OBJ_sm3) */,
++    971 /* 1.2.156.10197.1.501 (OBJ_SM2_with_SM3) */,
++    970 /* 1.2.156.10197.1.504 (OBJ_sm3WithRSAEncryption) */,
++    974 /* 1.2.156.10197.1.801 (OBJ_zuc_128_eea3) */,
++    975 /* 1.2.156.10197.1.802 (OBJ_zuc_128_eia3) */,
+     776 /* 1.2.410.200004.1.3 (OBJ_seed_ecb) */,
+     777 /* 1.2.410.200004.1.4 (OBJ_seed_cbc) */,
+     779 /* 1.2.410.200004.1.5 (OBJ_seed_cfb128) */,
+@@ -11482,6 +11736,7 @@ static const uint16_t kNIDsInOIDOrder[] = {
+     455 /* 0.9.2342.19200300.100.4.20 (OBJ_pilotOrganization) */,
+     456 /* 0.9.2342.19200300.100.4.21 (OBJ_pilotDSA) */,
+     457 /* 0.9.2342.19200300.100.4.22 (OBJ_qualityLabelledData) */,
++    972 /* 1.2.156.10197.1.401.3.1 (OBJ_hmacWithSM3) */,
+     189 /* 1.2.840.113549.1.9.16.0 (OBJ_id_smime_mod) */,
+     190 /* 1.2.840.113549.1.9.16.1 (OBJ_id_smime_ct) */,
+     191 /* 1.2.840.113549.1.9.16.2 (OBJ_id_smime_aa) */,
+diff --git a/third_party/boringssl/src/crypto/obj/obj_mac.num b/third_party/boringssl/src/crypto/obj/obj_mac.num
+index a0519aceeb..bd8f2dd48c 100644
+--- a/third_party/boringssl/src/crypto/obj/obj_mac.num
++++ b/third_party/boringssl/src/crypto/obj/obj_mac.num
+@@ -952,3 +952,23 @@ X448		961
+ sha512_256		962
+ hkdf		963
+ X25519Kyber768Draft00		964
++ISO_CN		965
++oscca		966
++sm_scheme		967
++sm2		968
++sm3		969
++sm3WithRSAEncryption		970
++SM2_with_SM3		971
++hmacWithSM3		972
++zuc		973
++zuc_128_eea3		974
++zuc_128_eia3		975
++sm4_ecb		976
++sm4_cbc		977
++sm4_ofb128		978
++sm4_cfb128		979
++sm4_cfb1		980
++sm4_cfb8		981
++sm4_ctr		982
++sm4_gcm		983
++sm4_ccm		984
+diff --git a/third_party/boringssl/src/crypto/obj/obj_xref.c b/third_party/boringssl/src/crypto/obj/obj_xref.c
+index 21bde279d1..2476aa8c35 100644
+--- a/third_party/boringssl/src/crypto/obj/obj_xref.c
++++ b/third_party/boringssl/src/crypto/obj/obj_xref.c
+@@ -74,6 +74,7 @@ static const nid_triple kTriples[] = {
+     {NID_sha256WithRSAEncryption, NID_sha256, NID_rsaEncryption},
+     {NID_sha384WithRSAEncryption, NID_sha384, NID_rsaEncryption},
+     {NID_sha512WithRSAEncryption, NID_sha512, NID_rsaEncryption},
++    {NID_sm3WithRSAEncryption, NID_sm3, NID_rsaEncryption},
+     // DSA.
+     {NID_dsaWithSHA1, NID_sha1, NID_dsa},
+     {NID_dsaWithSHA1_2, NID_sha1, NID_dsa_2},
+diff --git a/third_party/boringssl/src/crypto/obj/objects.txt b/third_party/boringssl/src/crypto/obj/objects.txt
+index 3ad32ea3d1..4308b441f1 100644
+--- a/third_party/boringssl/src/crypto/obj/objects.txt
++++ b/third_party/boringssl/src/crypto/obj/objects.txt
+@@ -1358,3 +1358,36 @@ secg-scheme 14 3 : dhSinglePass-cofactorDH-sha512kdf-scheme
+  : AuthANY : auth-any
+ 
+  : HKDF : hkdf
++
++member-body 156         : ISO-CN        : ISO CN Member Body
++ISO-CN 10197            : oscca
++oscca 1                 : sm-scheme
++
++sm-scheme 301           : SM2                   : sm2
++
++sm-scheme 401           : SM3                   : sm3
++sm-scheme 504           : RSA-SM3		: sm3WithRSAEncryption
++
++sm-scheme 501           : SM2-SM3               : SM2-with-SM3
++
++# From GM/T 0091-2020
++sm3 3 1			:			: hmacWithSM3
++
++# ZUC stream cipher
++sm-scheme 201           : ZUC                   : zuc
++sm-scheme 801           : ZUC-128-EEA3          : zuc-128-eea3
++sm-scheme 802           : ZUC-128-EIA3          : zuc-128-eia3
++
++# Definitions for SM4 cipher
++
++sm-scheme 104 1         : SM4-ECB             : sm4-ecb
++sm-scheme 104 2         : SM4-CBC             : sm4-cbc
++!Cname sm4-ofb128
++sm-scheme 104 3         : SM4-OFB             : sm4-ofb
++!Cname sm4-cfb128
++sm-scheme 104 4         : SM4-CFB             : sm4-cfb
++sm-scheme 104 5         : SM4-CFB1            : sm4-cfb1
++sm-scheme 104 6         : SM4-CFB8            : sm4-cfb8
++sm-scheme 104 7         : SM4-CTR             : sm4-ctr
++sm-scheme 104 8         : SM4-GCM             : sm4-gcm
++sm-scheme 104 9         : SM4-CCM             : sm4-ccm
+\ No newline at end of file
+diff --git a/third_party/boringssl/src/crypto/sm3/sm3.c b/third_party/boringssl/src/crypto/sm3/sm3.c
+new file mode 100644
+index 0000000000..0c12071618
+--- /dev/null
++++ b/third_party/boringssl/src/crypto/sm3/sm3.c
+@@ -0,0 +1,204 @@
++/*
++ * Copyright 2017-2021 The OpenSSL Project Authors. All Rights Reserved.
++ * Copyright 2017 Ribose Inc. All Rights Reserved.
++ * Ported from Ribose contributions from Botan.
++ *
++ * Licensed under the Apache License 2.0 (the "License").  You may not use
++ * this file except in compliance with the License.  You can obtain a copy
++ * in the file LICENSE in the source distribution or at
++ * https://www.openssl.org/source/license.html
++ */
++
++#include "../fipsmodule/digest/md32_common.h"
++#include "sm3_local.h"
++
++uint8_t *SM3(const uint8_t *data, size_t len, uint8_t out[SM3_DIGEST_LENGTH]) {
++  SM3_CTX ctx;
++  SM3_Init(&ctx);
++  SM3_Update(&ctx, data, len);
++  SM3_Final(out, &ctx);
++
++  return out;
++}
++
++int SM3_Init(SM3_CTX *c)
++{
++  memset(c, 0, sizeof(*c));
++  c->A = SM3_A;
++  c->B = SM3_B;
++  c->C = SM3_C;
++  c->D = SM3_D;
++  c->E = SM3_E;
++  c->F = SM3_F;
++  c->G = SM3_G;
++  c->H = SM3_H;
++  return 1;
++}
++
++void ossl_sm3_block_data_order(SM3_CTX *ctx, const void *p, size_t num)
++{
++  const unsigned char *data = p;
++  register unsigned MD32_REG_T A, B, C, D, E, F, G, H;
++
++  unsigned MD32_REG_T W00, W01, W02, W03, W04, W05, W06, W07,
++      W08, W09, W10, W11, W12, W13, W14, W15;
++
++  for (; num--;) {
++
++    A = ctx->A;
++    B = ctx->B;
++    C = ctx->C;
++    D = ctx->D;
++    E = ctx->E;
++    F = ctx->F;
++    G = ctx->G;
++    H = ctx->H;
++
++    /*
++    * We have to load all message bytes immediately since SM3 reads
++    * them slightly out of order.
++    */
++    (void)HOST_c2l(data, W00);
++    (void)HOST_c2l(data, W01);
++    (void)HOST_c2l(data, W02);
++    (void)HOST_c2l(data, W03);
++    (void)HOST_c2l(data, W04);
++    (void)HOST_c2l(data, W05);
++    (void)HOST_c2l(data, W06);
++    (void)HOST_c2l(data, W07);
++    (void)HOST_c2l(data, W08);
++    (void)HOST_c2l(data, W09);
++    (void)HOST_c2l(data, W10);
++    (void)HOST_c2l(data, W11);
++    (void)HOST_c2l(data, W12);
++    (void)HOST_c2l(data, W13);
++    (void)HOST_c2l(data, W14);
++    (void)HOST_c2l(data, W15);
++
++    R1(A, B, C, D, E, F, G, H, 0x79CC4519, W00, W00 ^ W04);
++    W00 = EXPAND(W00, W07, W13, W03, W10);
++    R1(D, A, B, C, H, E, F, G, 0xF3988A32, W01, W01 ^ W05);
++    W01 = EXPAND(W01, W08, W14, W04, W11);
++    R1(C, D, A, B, G, H, E, F, 0xE7311465, W02, W02 ^ W06);
++    W02 = EXPAND(W02, W09, W15, W05, W12);
++    R1(B, C, D, A, F, G, H, E, 0xCE6228CB, W03, W03 ^ W07);
++    W03 = EXPAND(W03, W10, W00, W06, W13);
++    R1(A, B, C, D, E, F, G, H, 0x9CC45197, W04, W04 ^ W08);
++    W04 = EXPAND(W04, W11, W01, W07, W14);
++    R1(D, A, B, C, H, E, F, G, 0x3988A32F, W05, W05 ^ W09);
++    W05 = EXPAND(W05, W12, W02, W08, W15);
++    R1(C, D, A, B, G, H, E, F, 0x7311465E, W06, W06 ^ W10);
++    W06 = EXPAND(W06, W13, W03, W09, W00);
++    R1(B, C, D, A, F, G, H, E, 0xE6228CBC, W07, W07 ^ W11);
++    W07 = EXPAND(W07, W14, W04, W10, W01);
++    R1(A, B, C, D, E, F, G, H, 0xCC451979, W08, W08 ^ W12);
++    W08 = EXPAND(W08, W15, W05, W11, W02);
++    R1(D, A, B, C, H, E, F, G, 0x988A32F3, W09, W09 ^ W13);
++    W09 = EXPAND(W09, W00, W06, W12, W03);
++    R1(C, D, A, B, G, H, E, F, 0x311465E7, W10, W10 ^ W14);
++    W10 = EXPAND(W10, W01, W07, W13, W04);
++    R1(B, C, D, A, F, G, H, E, 0x6228CBCE, W11, W11 ^ W15);
++    W11 = EXPAND(W11, W02, W08, W14, W05);
++    R1(A, B, C, D, E, F, G, H, 0xC451979C, W12, W12 ^ W00);
++    W12 = EXPAND(W12, W03, W09, W15, W06);
++    R1(D, A, B, C, H, E, F, G, 0x88A32F39, W13, W13 ^ W01);
++    W13 = EXPAND(W13, W04, W10, W00, W07);
++    R1(C, D, A, B, G, H, E, F, 0x11465E73, W14, W14 ^ W02);
++    W14 = EXPAND(W14, W05, W11, W01, W08);
++    R1(B, C, D, A, F, G, H, E, 0x228CBCE6, W15, W15 ^ W03);
++    W15 = EXPAND(W15, W06, W12, W02, W09);
++    R2(A, B, C, D, E, F, G, H, 0x9D8A7A87, W00, W00 ^ W04);
++    W00 = EXPAND(W00, W07, W13, W03, W10);
++    R2(D, A, B, C, H, E, F, G, 0x3B14F50F, W01, W01 ^ W05);
++    W01 = EXPAND(W01, W08, W14, W04, W11);
++    R2(C, D, A, B, G, H, E, F, 0x7629EA1E, W02, W02 ^ W06);
++    W02 = EXPAND(W02, W09, W15, W05, W12);
++    R2(B, C, D, A, F, G, H, E, 0xEC53D43C, W03, W03 ^ W07);
++    W03 = EXPAND(W03, W10, W00, W06, W13);
++    R2(A, B, C, D, E, F, G, H, 0xD8A7A879, W04, W04 ^ W08);
++    W04 = EXPAND(W04, W11, W01, W07, W14);
++    R2(D, A, B, C, H, E, F, G, 0xB14F50F3, W05, W05 ^ W09);
++    W05 = EXPAND(W05, W12, W02, W08, W15);
++    R2(C, D, A, B, G, H, E, F, 0x629EA1E7, W06, W06 ^ W10);
++    W06 = EXPAND(W06, W13, W03, W09, W00);
++    R2(B, C, D, A, F, G, H, E, 0xC53D43CE, W07, W07 ^ W11);
++    W07 = EXPAND(W07, W14, W04, W10, W01);
++    R2(A, B, C, D, E, F, G, H, 0x8A7A879D, W08, W08 ^ W12);
++    W08 = EXPAND(W08, W15, W05, W11, W02);
++    R2(D, A, B, C, H, E, F, G, 0x14F50F3B, W09, W09 ^ W13);
++    W09 = EXPAND(W09, W00, W06, W12, W03);
++    R2(C, D, A, B, G, H, E, F, 0x29EA1E76, W10, W10 ^ W14);
++    W10 = EXPAND(W10, W01, W07, W13, W04);
++    R2(B, C, D, A, F, G, H, E, 0x53D43CEC, W11, W11 ^ W15);
++    W11 = EXPAND(W11, W02, W08, W14, W05);
++    R2(A, B, C, D, E, F, G, H, 0xA7A879D8, W12, W12 ^ W00);
++    W12 = EXPAND(W12, W03, W09, W15, W06);
++    R2(D, A, B, C, H, E, F, G, 0x4F50F3B1, W13, W13 ^ W01);
++    W13 = EXPAND(W13, W04, W10, W00, W07);
++    R2(C, D, A, B, G, H, E, F, 0x9EA1E762, W14, W14 ^ W02);
++    W14 = EXPAND(W14, W05, W11, W01, W08);
++    R2(B, C, D, A, F, G, H, E, 0x3D43CEC5, W15, W15 ^ W03);
++    W15 = EXPAND(W15, W06, W12, W02, W09);
++    R2(A, B, C, D, E, F, G, H, 0x7A879D8A, W00, W00 ^ W04);
++    W00 = EXPAND(W00, W07, W13, W03, W10);
++    R2(D, A, B, C, H, E, F, G, 0xF50F3B14, W01, W01 ^ W05);
++    W01 = EXPAND(W01, W08, W14, W04, W11);
++    R2(C, D, A, B, G, H, E, F, 0xEA1E7629, W02, W02 ^ W06);
++    W02 = EXPAND(W02, W09, W15, W05, W12);
++    R2(B, C, D, A, F, G, H, E, 0xD43CEC53, W03, W03 ^ W07);
++    W03 = EXPAND(W03, W10, W00, W06, W13);
++    R2(A, B, C, D, E, F, G, H, 0xA879D8A7, W04, W04 ^ W08);
++    W04 = EXPAND(W04, W11, W01, W07, W14);
++    R2(D, A, B, C, H, E, F, G, 0x50F3B14F, W05, W05 ^ W09);
++    W05 = EXPAND(W05, W12, W02, W08, W15);
++    R2(C, D, A, B, G, H, E, F, 0xA1E7629E, W06, W06 ^ W10);
++    W06 = EXPAND(W06, W13, W03, W09, W00);
++    R2(B, C, D, A, F, G, H, E, 0x43CEC53D, W07, W07 ^ W11);
++    W07 = EXPAND(W07, W14, W04, W10, W01);
++    R2(A, B, C, D, E, F, G, H, 0x879D8A7A, W08, W08 ^ W12);
++    W08 = EXPAND(W08, W15, W05, W11, W02);
++    R2(D, A, B, C, H, E, F, G, 0x0F3B14F5, W09, W09 ^ W13);
++    W09 = EXPAND(W09, W00, W06, W12, W03);
++    R2(C, D, A, B, G, H, E, F, 0x1E7629EA, W10, W10 ^ W14);
++    W10 = EXPAND(W10, W01, W07, W13, W04);
++    R2(B, C, D, A, F, G, H, E, 0x3CEC53D4, W11, W11 ^ W15);
++    W11 = EXPAND(W11, W02, W08, W14, W05);
++    R2(A, B, C, D, E, F, G, H, 0x79D8A7A8, W12, W12 ^ W00);
++    W12 = EXPAND(W12, W03, W09, W15, W06);
++    R2(D, A, B, C, H, E, F, G, 0xF3B14F50, W13, W13 ^ W01);
++    W13 = EXPAND(W13, W04, W10, W00, W07);
++    R2(C, D, A, B, G, H, E, F, 0xE7629EA1, W14, W14 ^ W02);
++    W14 = EXPAND(W14, W05, W11, W01, W08);
++    R2(B, C, D, A, F, G, H, E, 0xCEC53D43, W15, W15 ^ W03);
++    W15 = EXPAND(W15, W06, W12, W02, W09);
++    R2(A, B, C, D, E, F, G, H, 0x9D8A7A87, W00, W00 ^ W04);
++    W00 = EXPAND(W00, W07, W13, W03, W10);
++    R2(D, A, B, C, H, E, F, G, 0x3B14F50F, W01, W01 ^ W05);
++    W01 = EXPAND(W01, W08, W14, W04, W11);
++    R2(C, D, A, B, G, H, E, F, 0x7629EA1E, W02, W02 ^ W06);
++    W02 = EXPAND(W02, W09, W15, W05, W12);
++    R2(B, C, D, A, F, G, H, E, 0xEC53D43C, W03, W03 ^ W07);
++    W03 = EXPAND(W03, W10, W00, W06, W13);
++    R2(A, B, C, D, E, F, G, H, 0xD8A7A879, W04, W04 ^ W08);
++    R2(D, A, B, C, H, E, F, G, 0xB14F50F3, W05, W05 ^ W09);
++    R2(C, D, A, B, G, H, E, F, 0x629EA1E7, W06, W06 ^ W10);
++    R2(B, C, D, A, F, G, H, E, 0xC53D43CE, W07, W07 ^ W11);
++    R2(A, B, C, D, E, F, G, H, 0x8A7A879D, W08, W08 ^ W12);
++    R2(D, A, B, C, H, E, F, G, 0x14F50F3B, W09, W09 ^ W13);
++    R2(C, D, A, B, G, H, E, F, 0x29EA1E76, W10, W10 ^ W14);
++    R2(B, C, D, A, F, G, H, E, 0x53D43CEC, W11, W11 ^ W15);
++    R2(A, B, C, D, E, F, G, H, 0xA7A879D8, W12, W12 ^ W00);
++    R2(D, A, B, C, H, E, F, G, 0x4F50F3B1, W13, W13 ^ W01);
++    R2(C, D, A, B, G, H, E, F, 0x9EA1E762, W14, W14 ^ W02);
++    R2(B, C, D, A, F, G, H, E, 0x3D43CEC5, W15, W15 ^ W03);
++
++    ctx->A ^= A;
++    ctx->B ^= B;
++    ctx->C ^= C;
++    ctx->D ^= D;
++    ctx->E ^= E;
++    ctx->F ^= F;
++    ctx->G ^= G;
++    ctx->H ^= H;
++  }
++}
+diff --git a/third_party/boringssl/src/crypto/sm3/sm3_local.h b/third_party/boringssl/src/crypto/sm3/sm3_local.h
+new file mode 100644
+index 0000000000..45a5364296
+--- /dev/null
++++ b/third_party/boringssl/src/crypto/sm3/sm3_local.h
+@@ -0,0 +1,253 @@
++/*
++ * Copyright 2017-2021 The OpenSSL Project Authors. All Rights Reserved.
++ * Copyright 2017 Ribose Inc. All Rights Reserved.
++ * Ported from Ribose contributions from Botan.
++ *
++ * Licensed under the Apache License 2.0 (the "License").  You may not use
++ * this file except in compliance with the License.  You can obtain a copy
++ * in the file LICENSE in the source distribution or at
++ * https://www.openssl.org/source/license.html
++ */
++
++#include <string.h>
++#include <openssl/sm3.h>
++
++#define DATA_ORDER_IS_BIG_ENDIAN
++
++#define HASH_LONG               SM3_WORD
++#define HASH_CTX                SM3_CTX
++#define HASH_CBLOCK             SM3_CBLOCK
++#define HASH_UPDATE             SM3_Update
++#define HASH_TRANSFORM          SM3_Transform
++#define HASH_FINAL              SM3_Final
++#define HASH_MAKE_STRING(c, s)              \
++      do {                                  \
++        unsigned long ll;                   \
++        ll=(c)->A; (void)HOST_l2c(ll, (s)); \
++        ll=(c)->B; (void)HOST_l2c(ll, (s)); \
++        ll=(c)->C; (void)HOST_l2c(ll, (s)); \
++        ll=(c)->D; (void)HOST_l2c(ll, (s)); \
++        ll=(c)->E; (void)HOST_l2c(ll, (s)); \
++        ll=(c)->F; (void)HOST_l2c(ll, (s)); \
++        ll=(c)->G; (void)HOST_l2c(ll, (s)); \
++        ll=(c)->H; (void)HOST_l2c(ll, (s)); \
++      } while (0)
++
++#if defined(OPENSSL_SM3_ASM)
++# if defined(__aarch64__)
++#  include "crypto/arm_arch.h"
++#  define HWSM3_CAPABLE (OPENSSL_armcap_P & ARMV8_SM3)
++void ossl_hwsm3_block_data_order(SM3_CTX *c, const void *p, size_t num);
++# endif
++#endif
++
++#if defined(HWSM3_CAPABLE)
++# define HASH_BLOCK_DATA_ORDER (HWSM3_CAPABLE ? ossl_hwsm3_block_data_order \
++                                              : ossl_sm3_block_data_order)
++#else
++# define HASH_BLOCK_DATA_ORDER   ossl_sm3_block_data_order
++#endif
++
++void ossl_sm3_block_data_order(SM3_CTX *c, const void *p, size_t num);
++
++#define ROTATE(a,n)     (((a)<<(n))|(((a)&0xffffffff)>>(32-(n))))
++
++#if defined(DATA_ORDER_IS_BIG_ENDIAN)
++
++# define HOST_c2l(c,l)  (l =(((unsigned long)(*((c)++)))<<24),          \
++                         l|=(((unsigned long)(*((c)++)))<<16),          \
++                         l|=(((unsigned long)(*((c)++)))<< 8),          \
++                         l|=(((unsigned long)(*((c)++)))    )           )
++# define HOST_l2c(l,c)  (*((c)++)=(unsigned char)(((l)>>24)&0xff),      \
++                         *((c)++)=(unsigned char)(((l)>>16)&0xff),      \
++                         *((c)++)=(unsigned char)(((l)>> 8)&0xff),      \
++                         *((c)++)=(unsigned char)(((l)    )&0xff),      \
++                         l)
++
++#elif defined(DATA_ORDER_IS_LITTLE_ENDIAN)
++
++# define HOST_c2l(c,l)  (l =(((unsigned long)(*((c)++)))    ),          \
++                         l|=(((unsigned long)(*((c)++)))<< 8),          \
++                         l|=(((unsigned long)(*((c)++)))<<16),          \
++                         l|=(((unsigned long)(*((c)++)))<<24)           )
++# define HOST_l2c(l,c)  (*((c)++)=(unsigned char)(((l)    )&0xff),      \
++                         *((c)++)=(unsigned char)(((l)>> 8)&0xff),      \
++                         *((c)++)=(unsigned char)(((l)>>16)&0xff),      \
++                         *((c)++)=(unsigned char)(((l)>>24)&0xff),      \
++                         l)
++
++#endif
++
++/*
++ * Time for some action :-)
++ */
++
++int HASH_UPDATE(HASH_CTX *c, const void *data_, size_t len)
++{
++  const unsigned char *data = data_;
++  unsigned char *p;
++  HASH_LONG l;
++  size_t n;
++
++  if (len == 0)
++    return 1;
++
++  l = (c->Nl + (((HASH_LONG) len) << 3)) & 0xffffffffUL;
++  if (l < c->Nl)              /* overflow */
++    c->Nh++;
++  c->Nh += (HASH_LONG) (len >> 29); /* might cause compiler warning on
++                                      * 16-bit */
++  c->Nl = l;
++
++  n = c->num;
++  if (n != 0) {
++    p = (unsigned char *)c->data;
++
++    if (len >= HASH_CBLOCK || len + n >= HASH_CBLOCK) {
++      memcpy(p + n, data, HASH_CBLOCK - n);
++      HASH_BLOCK_DATA_ORDER(c, p, 1);
++      n = HASH_CBLOCK - n;
++      data += n;
++      len -= n;
++      c->num = 0;
++      /*
++        * We use memset rather than OPENSSL_cleanse() here deliberately.
++        * Using OPENSSL_cleanse() here could be a performance issue. It
++        * will get properly cleansed on finalisation so this isn't a
++        * security problem.
++        */
++      memset(p, 0, HASH_CBLOCK); /* keep it zeroed */
++    } else {
++      memcpy(p + n, data, len);
++      c->num += (unsigned int)len;
++      return 1;
++    }
++  }
++
++  n = len / HASH_CBLOCK;
++  if (n > 0) {
++    HASH_BLOCK_DATA_ORDER(c, data, n);
++    n *= HASH_CBLOCK;
++    data += n;
++    len -= n;
++  }
++
++  if (len != 0) {
++    p = (unsigned char *)c->data;
++    c->num = (unsigned int)len;
++    memcpy(p, data, len);
++  }
++  return 1;
++}
++
++void HASH_TRANSFORM(HASH_CTX *c, const unsigned char *data)
++{
++  HASH_BLOCK_DATA_ORDER(c, data, 1);
++}
++
++int HASH_FINAL(unsigned char *md, HASH_CTX *c)
++{
++  unsigned char *p = (unsigned char *)c->data;
++  size_t n = c->num;
++
++  p[n] = 0x80;                /* there is always room for one */
++  n++;
++
++  if (n > (HASH_CBLOCK - 8)) {
++    memset(p + n, 0, HASH_CBLOCK - n);
++    n = 0;
++    HASH_BLOCK_DATA_ORDER(c, p, 1);
++  }
++  memset(p + n, 0, HASH_CBLOCK - 8 - n);
++
++  p += HASH_CBLOCK - 8;
++#if   defined(DATA_ORDER_IS_BIG_ENDIAN)
++  (void)HOST_l2c(c->Nh, p);
++  (void)HOST_l2c(c->Nl, p);
++#elif defined(DATA_ORDER_IS_LITTLE_ENDIAN)
++  (void)HOST_l2c(c->Nl, p);
++  (void)HOST_l2c(c->Nh, p);
++#endif
++  p -= HASH_CBLOCK;
++  HASH_BLOCK_DATA_ORDER(c, p, 1);
++  c->num = 0;
++  OPENSSL_cleanse(p, HASH_CBLOCK);
++
++#ifndef HASH_MAKE_STRING
++# error "HASH_MAKE_STRING must be defined!"
++#else
++  HASH_MAKE_STRING(c, md);
++#endif
++
++  return 1;
++}
++
++#ifndef MD32_REG_T
++# if defined(__alpha) || defined(__mips)
++#  define MD32_REG_T long
++/*
++ * This comment was originally written for MD5, which is why it
++ * discusses A-D. But it basically applies to all 32-bit digests,
++ * which is why it was moved to common header file.
++ *
++ * In case you wonder why A-D are declared as long and not
++ * as MD5_LONG. Doing so results in slight performance
++ * boost on LP64 architectures. The catch is we don't
++ * really care if 32 MSBs of a 64-bit register get polluted
++ * with eventual overflows as we *save* only 32 LSBs in
++ * *either* case. Now declaring 'em long excuses the compiler
++ * from keeping 32 MSBs zeroed resulting in 13% performance
++ * improvement under SPARC Solaris7/64 and 5% under AlphaLinux.
++ * Well, to be honest it should say that this *prevents*
++ * performance degradation.
++ */
++# else
++/*
++ * Above is not absolute and there are LP64 compilers that
++ * generate better code if MD32_REG_T is defined int. The above
++ * pre-processor condition reflects the circumstances under which
++ * the conclusion was made and is subject to further extension.
++ */
++#  define MD32_REG_T int
++# endif
++#endif
++
++#define P0(X) (X ^ ROTATE(X, 9) ^ ROTATE(X, 17))
++#define P1(X) (X ^ ROTATE(X, 15) ^ ROTATE(X, 23))
++
++#define FF0(X,Y,Z) (X ^ Y ^ Z)
++#define GG0(X,Y,Z) (X ^ Y ^ Z)
++
++#define FF1(X,Y,Z) ((X & Y) | ((X | Y) & Z))
++#define GG1(X,Y,Z) ((Z ^ (X & (Y ^ Z))))
++
++#define EXPAND(W0,W7,W13,W3,W10) \
++   (P1(W0 ^ W7 ^ ROTATE(W13, 15)) ^ ROTATE(W3, 7) ^ W10)
++
++#define RND(A, B, C, D, E, F, G, H, TJ, Wi, Wj, FF, GG)           \
++     do {                                                         \
++       const SM3_WORD A12 = ROTATE(A, 12);                        \
++       const SM3_WORD A12_SM = A12 + E + TJ;                      \
++       const SM3_WORD SS1 = ROTATE(A12_SM, 7);                    \
++       const SM3_WORD TT1 = FF(A, B, C) + D + (SS1 ^ A12) + (Wj); \
++       const SM3_WORD TT2 = GG(E, F, G) + H + SS1 + Wi;           \
++       B = ROTATE(B, 9);                                          \
++       D = TT1;                                                   \
++       F = ROTATE(F, 19);                                         \
++       H = P0(TT2);                                               \
++     } while(0)
++
++#define R1(A,B,C,D,E,F,G,H,TJ,Wi,Wj) \
++   RND(A,B,C,D,E,F,G,H,TJ,Wi,Wj,FF0,GG0)
++
++#define R2(A,B,C,D,E,F,G,H,TJ,Wi,Wj) \
++   RND(A,B,C,D,E,F,G,H,TJ,Wi,Wj,FF1,GG1)
++
++#define SM3_A 0x7380166fUL
++#define SM3_B 0x4914b2b9UL
++#define SM3_C 0x172442d7UL
++#define SM3_D 0xda8a0600UL
++#define SM3_E 0xa96f30bcUL
++#define SM3_F 0x163138aaUL
++#define SM3_G 0xe38dee4dUL
++#define SM3_H 0xb0fb0e4eUL
+diff --git a/third_party/boringssl/src/crypto/sm3/sm3_test.cc b/third_party/boringssl/src/crypto/sm3/sm3_test.cc
+new file mode 100644
+index 0000000000..9535a7475d
+--- /dev/null
++++ b/third_party/boringssl/src/crypto/sm3/sm3_test.cc
+@@ -0,0 +1,66 @@
++/*
++ * Copyright 2021-2022 The OpenSSL Project Authors. All Rights Reserved.
++ * Copyright 2021 UnionTech. All Rights Reserved.
++ *
++ * Licensed under the Apache License 2.0 (the "License").  You may not use
++ * this file except in compliance with the License.  You can obtain a copy
++ * in the file LICENSE in the source distribution or at
++ * https://www.openssl.org/source/license.html
++ */
++
++/*
++ * tests for the SM3 module.
++ */
++#include <gtest/gtest.h>
++
++# include <openssl/sm3.h>
++
++TEST(SM3Test, Digest) {
++  static const unsigned char input1[] = {
++      0x61, 0x62, 0x63
++  };
++
++  /*
++    * This test vector comes from Example 1 (A.1) of GM/T 0004-2012
++    */
++  static const unsigned char expected1[SM3_DIGEST_LENGTH] = {
++      0x66, 0xc7, 0xf0, 0xf4, 0x62, 0xee, 0xed, 0xd9,
++      0xd1, 0xf2, 0xd4, 0x6b, 0xdc, 0x10, 0xe4, 0xe2,
++      0x41, 0x67, 0xc4, 0x87, 0x5c, 0xf2, 0xf7, 0xa2,
++      0x29, 0x7d, 0xa0, 0x2b, 0x8f, 0x4b, 0xa8, 0xe0
++  };
++
++  static const unsigned char input2[] = {
++      0x61, 0x62, 0x63, 0x64, 0x61, 0x62, 0x63, 0x64,
++      0x61, 0x62, 0x63, 0x64, 0x61, 0x62, 0x63, 0x64,
++      0x61, 0x62, 0x63, 0x64, 0x61, 0x62, 0x63, 0x64,
++      0x61, 0x62, 0x63, 0x64, 0x61, 0x62, 0x63, 0x64,
++      0x61, 0x62, 0x63, 0x64, 0x61, 0x62, 0x63, 0x64,
++      0x61, 0x62, 0x63, 0x64, 0x61, 0x62, 0x63, 0x64,
++      0x61, 0x62, 0x63, 0x64, 0x61, 0x62, 0x63, 0x64,
++      0x61, 0x62, 0x63, 0x64, 0x61, 0x62, 0x63, 0x64
++  };
++
++  /*
++    * This test vector comes from Example 2 (A.2) from GM/T 0004-2012
++    */
++  static const unsigned char expected2[SM3_DIGEST_LENGTH] = {
++      0xde, 0xbe, 0x9f, 0xf9, 0x22, 0x75, 0xb8, 0xa1,
++      0x38, 0x60, 0x48, 0x89, 0xc1, 0x8e, 0x5a, 0x4d,
++      0x6f, 0xdb, 0x70, 0xe5, 0x38, 0x7e, 0x57, 0x65,
++      0x29, 0x3d, 0xcb, 0xa3, 0x9c, 0x0c, 0x57, 0x32
++  };
++
++  SM3_CTX ctx1, ctx2;
++  unsigned char md1[SM3_DIGEST_LENGTH], md2[SM3_DIGEST_LENGTH];
++
++  EXPECT_TRUE(SM3_Init(&ctx1));
++  EXPECT_TRUE(SM3_Update(&ctx1, input1, sizeof(input1)));
++  EXPECT_TRUE(SM3_Final(md1, &ctx1));
++  EXPECT_TRUE(memcmp(md1, expected1, SM3_DIGEST_LENGTH) == 0);
++
++  EXPECT_TRUE(SM3_Init(&ctx2));
++  EXPECT_TRUE(SM3_Update(&ctx2, input2, sizeof(input2)));
++  EXPECT_TRUE(SM3_Final(md2, &ctx2));
++  EXPECT_TRUE(memcmp(md2, expected2, SM3_DIGEST_LENGTH) == 0);
++}
+diff --git a/third_party/boringssl/src/gen/sources.bzl b/third_party/boringssl/src/gen/sources.bzl
+index 7717b76b2a..f8d48d2140 100644
+--- a/third_party/boringssl/src/gen/sources.bzl
++++ b/third_party/boringssl/src/gen/sources.bzl
+@@ -399,6 +399,7 @@ crypto_sources = [
+   "crypto/rsa_extra/rsa_crypt.c",
+   "crypto/rsa_extra/rsa_print.c",
+   "crypto/siphash/siphash.c",
++  "crypto/sm3/sm3.c",
+   "crypto/spx/address.c",
+   "crypto/spx/fors.c",
+   "crypto/spx/merkle.c",
+@@ -561,6 +562,7 @@ crypto_headers = [
+   "include/openssl/service_indicator.h",
+   "include/openssl/sha.h",
+   "include/openssl/siphash.h",
++  "include/openssl/sm3.h",
+   "include/openssl/span.h",
+   "include/openssl/stack.h",
+   "include/openssl/target.h",
+@@ -624,6 +626,7 @@ crypto_internal_headers = [
+   "crypto/poly1305/internal.h",
+   "crypto/pool/internal.h",
+   "crypto/rsa_extra/internal.h",
++  "crypto/sm3/sm3_local.h",
+   "crypto/spx/address.h",
+   "crypto/spx/fors.h",
+   "crypto/spx/merkle.h",
+@@ -737,6 +740,7 @@ crypto_test_sources = [
+   "crypto/rsa_extra/rsa_test.cc",
+   "crypto/self_test.cc",
+   "crypto/siphash/siphash_test.cc",
++  "crypto/sm3/sm3_test.cc",
+   "crypto/spx/spx_test.cc",
+   "crypto/stack/stack_test.cc",
+   "crypto/test/gtest_main.cc",
+diff --git a/third_party/boringssl/src/gen/sources.cmake b/third_party/boringssl/src/gen/sources.cmake
+index 4747cd1dd7..c2ade4d88c 100644
+--- a/third_party/boringssl/src/gen/sources.cmake
++++ b/third_party/boringssl/src/gen/sources.cmake
+@@ -416,6 +416,7 @@ set(
+   crypto/rsa_extra/rsa_crypt.c
+   crypto/rsa_extra/rsa_print.c
+   crypto/siphash/siphash.c
++  crypto/sm3/sm3.c
+   crypto/spx/address.c
+   crypto/spx/fors.c
+   crypto/spx/merkle.c
+@@ -580,6 +581,7 @@ set(
+   include/openssl/service_indicator.h
+   include/openssl/sha.h
+   include/openssl/siphash.h
++  include/openssl/sm3.h
+   include/openssl/span.h
+   include/openssl/stack.h
+   include/openssl/target.h
+@@ -645,6 +647,7 @@ set(
+   crypto/poly1305/internal.h
+   crypto/pool/internal.h
+   crypto/rsa_extra/internal.h
++  crypto/sm3/sm3_local.h
+   crypto/spx/address.h
+   crypto/spx/fors.h
+   crypto/spx/merkle.h
+@@ -764,6 +767,7 @@ set(
+   crypto/rsa_extra/rsa_test.cc
+   crypto/self_test.cc
+   crypto/siphash/siphash_test.cc
++  crypto/sm3/sm3_test.cc
+   crypto/spx/spx_test.cc
+   crypto/stack/stack_test.cc
+   crypto/test/gtest_main.cc
+diff --git a/third_party/boringssl/src/gen/sources.json b/third_party/boringssl/src/gen/sources.json
+index ef92a94257..344f9a262f 100644
+--- a/third_party/boringssl/src/gen/sources.json
++++ b/third_party/boringssl/src/gen/sources.json
+@@ -386,6 +386,7 @@
+       "crypto/rsa_extra/rsa_crypt.c",
+       "crypto/rsa_extra/rsa_print.c",
+       "crypto/siphash/siphash.c",
++      "crypto/sm3/sm3.c",
+       "crypto/spx/address.c",
+       "crypto/spx/fors.c",
+       "crypto/spx/merkle.c",
+@@ -547,6 +548,7 @@
+       "include/openssl/service_indicator.h",
+       "include/openssl/sha.h",
+       "include/openssl/siphash.h",
++      "include/openssl/sm3.h",
+       "include/openssl/span.h",
+       "include/openssl/stack.h",
+       "include/openssl/target.h",
+@@ -609,6 +611,7 @@
+       "crypto/poly1305/internal.h",
+       "crypto/pool/internal.h",
+       "crypto/rsa_extra/internal.h",
++      "crypto/sm3/sm3_local.h",
+       "crypto/spx/address.h",
+       "crypto/spx/fors.h",
+       "crypto/spx/merkle.h",
+@@ -721,6 +724,7 @@
+       "crypto/rsa_extra/rsa_test.cc",
+       "crypto/self_test.cc",
+       "crypto/siphash/siphash_test.cc",
++      "crypto/sm3/sm3_test.cc",
+       "crypto/spx/spx_test.cc",
+       "crypto/stack/stack_test.cc",
+       "crypto/test/gtest_main.cc",
+diff --git a/third_party/boringssl/src/include/openssl/digest.h b/third_party/boringssl/src/include/openssl/digest.h
+index 6e889993ed..f3651a8fa2 100644
+--- a/third_party/boringssl/src/include/openssl/digest.h
++++ b/third_party/boringssl/src/include/openssl/digest.h
+@@ -85,6 +85,7 @@ OPENSSL_EXPORT const EVP_MD *EVP_sha384(void);
+ OPENSSL_EXPORT const EVP_MD *EVP_sha512(void);
+ OPENSSL_EXPORT const EVP_MD *EVP_sha512_256(void);
+ OPENSSL_EXPORT const EVP_MD *EVP_blake2b256(void);
++OPENSSL_EXPORT const EVP_MD *EVP_sm3(void);
+ 
+ // EVP_md5_sha1 is a TLS-specific |EVP_MD| which computes the concatenation of
+ // MD5 and SHA-1, as used in TLS 1.1 and below.
+diff --git a/third_party/boringssl/src/include/openssl/nid.h b/third_party/boringssl/src/include/openssl/nid.h
+index 4dd8841b1e..5163b04f7c 100644
+--- a/third_party/boringssl/src/include/openssl/nid.h
++++ b/third_party/boringssl/src/include/openssl/nid.h
+@@ -4255,6 +4255,103 @@ extern "C" {
+ #define SN_X25519Kyber768Draft00 "X25519Kyber768Draft00"
+ #define NID_X25519Kyber768Draft00 964
+ 
++#define SN_ISO_CN "ISO-CN"
++#define LN_ISO_CN "ISO CN Member Body"
++#define NID_ISO_CN 965
++#define OBJ_ISO_CN 1L, 2L, 156L
++
++#define SN_oscca "oscca"
++#define NID_oscca 966
++#define OBJ_oscca 1L, 2L, 156L, 10197L
++
++#define SN_sm_scheme "sm-scheme"
++#define NID_sm_scheme 967
++#define OBJ_sm_scheme 1L, 2L, 156L, 10197L, 1L
++
++#define SN_sm2 "SM2"
++#define LN_sm2 "sm2"
++#define NID_sm2 968
++#define OBJ_sm2 1L, 2L, 156L, 10197L, 1L, 301L
++
++#define SN_sm3 "SM3"
++#define LN_sm3 "sm3"
++#define NID_sm3 969
++#define OBJ_sm3 1L, 2L, 156L, 10197L, 1L, 401L
++
++#define SN_sm3WithRSAEncryption "RSA-SM3"
++#define LN_sm3WithRSAEncryption "sm3WithRSAEncryption"
++#define NID_sm3WithRSAEncryption 970
++#define OBJ_sm3WithRSAEncryption 1L, 2L, 156L, 10197L, 1L, 504L
++
++#define SN_SM2_with_SM3 "SM2-SM3"
++#define LN_SM2_with_SM3 "SM2-with-SM3"
++#define NID_SM2_with_SM3 971
++#define OBJ_SM2_with_SM3 1L, 2L, 156L, 10197L, 1L, 501L
++
++#define LN_hmacWithSM3 "hmacWithSM3"
++#define NID_hmacWithSM3 972
++#define OBJ_hmacWithSM3 1L, 2L, 156L, 10197L, 1L, 401L, 3L, 1L
++
++#define SN_zuc "ZUC"
++#define LN_zuc "zuc"
++#define NID_zuc 973
++#define OBJ_zuc 1L, 2L, 156L, 10197L, 1L, 201L
++
++#define SN_zuc_128_eea3 "ZUC-128-EEA3"
++#define LN_zuc_128_eea3 "zuc-128-eea3"
++#define NID_zuc_128_eea3 974
++#define OBJ_zuc_128_eea3 1L, 2L, 156L, 10197L, 1L, 801L
++
++#define SN_zuc_128_eia3 "ZUC-128-EIA3"
++#define LN_zuc_128_eia3 "zuc-128-eia3"
++#define NID_zuc_128_eia3 975
++#define OBJ_zuc_128_eia3 1L, 2L, 156L, 10197L, 1L, 802L
++
++#define SN_sm4_ecb "SM4-ECB"
++#define LN_sm4_ecb "sm4-ecb"
++#define NID_sm4_ecb 976
++#define OBJ_sm4_ecb 1L, 2L, 156L, 10197L, 1L, 104L, 1L
++
++#define SN_sm4_cbc "SM4-CBC"
++#define LN_sm4_cbc "sm4-cbc"
++#define NID_sm4_cbc 977
++#define OBJ_sm4_cbc 1L, 2L, 156L, 10197L, 1L, 104L, 2L
++
++#define SN_sm4_ofb128 "SM4-OFB"
++#define LN_sm4_ofb128 "sm4-ofb"
++#define NID_sm4_ofb128 978
++#define OBJ_sm4_ofb128 1L, 2L, 156L, 10197L, 1L, 104L, 3L
++
++#define SN_sm4_cfb128 "SM4-CFB"
++#define LN_sm4_cfb128 "sm4-cfb"
++#define NID_sm4_cfb128 979
++#define OBJ_sm4_cfb128 1L, 2L, 156L, 10197L, 1L, 104L, 4L
++
++#define SN_sm4_cfb1 "SM4-CFB1"
++#define LN_sm4_cfb1 "sm4-cfb1"
++#define NID_sm4_cfb1 980
++#define OBJ_sm4_cfb1 1L, 2L, 156L, 10197L, 1L, 104L, 5L
++
++#define SN_sm4_cfb8 "SM4-CFB8"
++#define LN_sm4_cfb8 "sm4-cfb8"
++#define NID_sm4_cfb8 981
++#define OBJ_sm4_cfb8 1L, 2L, 156L, 10197L, 1L, 104L, 6L
++
++#define SN_sm4_ctr "SM4-CTR"
++#define LN_sm4_ctr "sm4-ctr"
++#define NID_sm4_ctr 982
++#define OBJ_sm4_ctr 1L, 2L, 156L, 10197L, 1L, 104L, 7L
++
++#define SN_sm4_gcm "SM4-GCM"
++#define LN_sm4_gcm "sm4-gcm"
++#define NID_sm4_gcm 983
++#define OBJ_sm4_gcm 1L, 2L, 156L, 10197L, 1L, 104L, 8L
++
++#define SN_sm4_ccm "SM4-CCM"
++#define LN_sm4_ccm "sm4-ccm"
++#define NID_sm4_ccm 984
++#define OBJ_sm4_ccm 1L, 2L, 156L, 10197L, 1L, 104L, 9L
++
+ 
+ #if defined(__cplusplus)
+ } /* extern C */
+diff --git a/third_party/boringssl/src/include/openssl/opensslconf.h b/third_party/boringssl/src/include/openssl/opensslconf.h
+index feb9246c0a..59d2dc3481 100644
+--- a/third_party/boringssl/src/include/openssl/opensslconf.h
++++ b/third_party/boringssl/src/include/openssl/opensslconf.h
+@@ -56,9 +56,9 @@
+ #define OPENSSL_NO_RMD160
+ #define OPENSSL_NO_SCTP
+ #define OPENSSL_NO_SEED
+-#define OPENSSL_NO_SM2
+-#define OPENSSL_NO_SM3
+-#define OPENSSL_NO_SM4
++// #define OPENSSL_NO_SM2
++// #define OPENSSL_NO_SM3
++// #define OPENSSL_NO_SM4
+ #define OPENSSL_NO_SRP
+ #define OPENSSL_NO_SSL_TRACE
+ #define OPENSSL_NO_SSL2
+diff --git a/third_party/boringssl/src/include/openssl/sm3.h b/third_party/boringssl/src/include/openssl/sm3.h
+new file mode 100644
+index 0000000000..e1926f0567
+--- /dev/null
++++ b/third_party/boringssl/src/include/openssl/sm3.h
+@@ -0,0 +1,49 @@
++/*
++ * Copyright 2017-2021 The OpenSSL Project Authors. All Rights Reserved.
++ * Copyright 2017 Ribose Inc. All Rights Reserved.
++ *
++ * Licensed under the Apache License 2.0 (the "License").  You may not use
++ * this file except in compliance with the License.  You can obtain a copy
++ * in the file LICENSE in the source distribution or at
++ * https://www.openssl.org/source/license.html
++ */
++
++/* This header can move into provider when legacy support is removed */
++#ifndef OPENSSL_SM3_H
++#define OPENSSL_SM3_H
++#pragma once
++
++#include <openssl/base.h>
++#include <stddef.h>
++#ifdef  __cplusplus
++extern "C" {
++#endif
++
++#define SM3_DIGEST_LENGTH 32
++#define SM3_WORD unsigned int
++
++#define SM3_CBLOCK      64
++#define SM3_LBLOCK      (SM3_CBLOCK/4)
++
++typedef struct SM3state_st {
++   SM3_WORD A, B, C, D, E, F, G, H;
++   SM3_WORD Nl, Nh;
++   SM3_WORD data[SM3_LBLOCK];
++   unsigned int num;
++} SM3_CTX;
++
++OPENSSL_EXPORT int SM3_Init(SM3_CTX *c);
++OPENSSL_EXPORT int SM3_Update(SM3_CTX *c, const void *data, size_t len);
++OPENSSL_EXPORT int SM3_Final(unsigned char *md, SM3_CTX *c);
++OPENSSL_EXPORT void SM3_Transform(SM3_CTX *c, const unsigned char *data);
++
++// SM3 writes the digest of |len| bytes from |data| to |out| and returns |out|.
++// There must be at least |SM3_DIGEST_LENGTH| bytes of space in |out|.
++OPENSSL_EXPORT uint8_t *SM3(const uint8_t *data, size_t len,
++                            uint8_t out[SM3_DIGEST_LENGTH]);
++
++#ifdef  __cplusplus
++}
++#endif
++
++#endif /* OPENSSL_SM3_H */
+diff --git a/third_party/boringssl/src/tool/digest.cc b/third_party/boringssl/src/tool/digest.cc
+index e66f0132d4..5c149c2f45 100644
+--- a/third_party/boringssl/src/tool/digest.cc
++++ b/third_party/boringssl/src/tool/digest.cc
+@@ -454,3 +454,7 @@ bool SHA512Sum(const std::vector<std::string> &args) {
+ bool SHA512256Sum(const std::vector<std::string> &args) {
+   return DigestSum(EVP_sha512_256(), args);
+ }
++
++bool SM3Sum(const std::vector<std::string> &args) {
++  return DigestSum(EVP_sm3(), args);
++}
+diff --git a/third_party/boringssl/src/tool/internal.h b/third_party/boringssl/src/tool/internal.h
+index 7f3692a5ee..fd96e9d203 100644
+--- a/third_party/boringssl/src/tool/internal.h
++++ b/third_party/boringssl/src/tool/internal.h
+@@ -137,6 +137,7 @@ bool SHA256Sum(const std::vector<std::string> &args);
+ bool SHA384Sum(const std::vector<std::string> &args);
+ bool SHA512Sum(const std::vector<std::string> &args);
+ bool SHA512256Sum(const std::vector<std::string> &args);
++bool SM3Sum(const std::vector<std::string> &args);
+ bool Server(const std::vector<std::string> &args);
+ bool Sign(const std::vector<std::string> &args);
+ bool Speed(const std::vector<std::string> &args);
+diff --git a/third_party/boringssl/src/tool/tool.cc b/third_party/boringssl/src/tool/tool.cc
+index 96bde33359..51ff6b67fb 100644
+--- a/third_party/boringssl/src/tool/tool.cc
++++ b/third_party/boringssl/src/tool/tool.cc
+@@ -61,6 +61,7 @@ static const Tool kTools[] = {
+   { "sha384sum", SHA384Sum },
+   { "sha512sum", SHA512Sum },
+   { "sha512256sum", SHA512256Sum },
++  { "sm3sum", SM3Sum },
+   { "sign", Sign },
+   { "speed", Speed },
+   { "", nullptr },
+-- 
+2.45.2
+
