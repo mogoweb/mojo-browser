@@ -210,36 +210,11 @@ override_dh_auto_clean:
 
 ###################### upstream source downloading ############################
 
-url=https://gsdview.appspot.com/chromium-browser-official
-version=$(shell dpkg-parsechangelog -S Version | sed s/-.*//)
-extract=chromium-$(version)
-tarfile=$(extract).tar
+url=https://github.com/mogoweb/mojo-browser/releases/download/v0.0.1
+version=127.0.6533.99
+extract=chromium_$(version)
+tarfile=$(extract)-debian.orig.tar
 tarball=$(tarfile).xz
-debvers=../chromium_$(version)
-seconds=$(debvers).seconds
-origtxz=$(debvers).orig.tar.xz
-removed=$(debvers).files-removed
-options=--sort=name --owner=0 --group=0 --numeric-owner --mtime="@$$(stat --format "%Y" ../$(tarball))" --clamp-mtime
 
 get-orig-source:
-	wget -nv --show-progress -c $(url)/$(tarball) -O ../$(tarball)
-	@date +%s > $(seconds)
-	# TODO: use `grep-dctrl -F Files-Excluded '' -s Files-Excluded debian/copyright` instead (from jochensp)
-	perl debian/scripts/get-excludes.pl "`tar tf ../$(tarball) | head -n1`" > $(debvers).excludes
-	@echo $$(($$(date +%s) - $$(cat $(seconds)))) seconds
-	@echo
-	test ! -e $(extract) || rm -rf $(extract)
-	tar --exclude-from=$(debvers).excludes -xf ../$(tarball)
-	@echo $$(($$(date +%s) - $$(cat $(seconds)))) seconds
-	@echo
-	rm -f $(debvers).excludes
-	cd $(extract) && ../debian/scripts/check-upstream
-	@echo $$(($$(date +%s) - $$(cat $(seconds)))) seconds
-	@echo
-	test ! -e $(origtxz) || rm -f $(origtxz)
-	tar $(options) -cf - $(extract) | xz -6 -T0 - > $(origtxz)
-	@echo $$(($$(date +%s) - $$(cat $(seconds)))) seconds
-	@echo
-	rm -rf $(extract)
-	@echo $$(($$(date +%s) - $$(cat $(seconds)))) seconds | tee seconds
-	@mv -f seconds $(seconds)
+	wget -nv --show-progress -c $(url)/$(tarball) -O ./$(tarball)
