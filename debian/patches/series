@@ -2,3 +2,5 @@
 mojo/0001-modify-browser-logo.patch
 mojo/0002-modify-product-name-to-Mojo-Browser.patch
 mojo/0003-add-sm3-algorithm.patch
+mojo/0004-add-sm4-algorithm.patch
+mojo/0005-add-TLCP-support-for-boringssl.patch
