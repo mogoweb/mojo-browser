@@ -36,7 +36,7 @@ jobs:
         # See https://cmake.org/cmake/help/latest/variable/CMAKE_BUILD_TYPE.html?highlight=cmake_build_type
         run: |
           dpkg-buildpackage -T get-orig-source
-          tar xvf chromium_127.0.6533.99-debian.orig.tar
+          tar xvf chromium_127.0.6533.99-debian.orig.tar.xz
           cd chromium_127.0.6533.99
           cp -r ../debian .
           dpkg-buildpackage -us -uc -b
