@@ -39,4 +39,4 @@ jobs:
           tar xvf chromium_127.0.6533.99-debian.orig.tar.xz
           cd chromium-127.0.6533.99
           cp -r ../debian .
-          dpkg-buildpackage -us -uc -b
+          dpkg-buildpackage -us -uc
