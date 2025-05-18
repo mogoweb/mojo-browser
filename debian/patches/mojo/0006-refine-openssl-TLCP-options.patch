@@ -1,0 +1,222 @@
+From 8734a361074fe100e79f58e4a977d52fded266be Mon Sep 17 00:00:00 2001
+From: mogoweb <mogoweb@gmail.com>
+Date: Thu, 15 May 2025 22:30:59 +0800
+Subject: [PATCH] refine openssl TLCP options
+
+---
+ .../boringssl/src/include/openssl/ssl.h       |  1 -
+ .../boringssl/src/ssl/handshake_client.cc     |  5 ++-
+ third_party/boringssl/src/ssl/internal.h      |  2 -
+ third_party/boringssl/src/ssl/s3_lib.cc       | 24 ------------
+ third_party/boringssl/src/ssl/ssl_test.cc     |  4 --
+ third_party/boringssl/src/ssl/ssl_versions.cc |  2 +-
+ third_party/boringssl/src/ssl/tls_method.cc   | 39 -------------------
+ third_party/boringssl/src/tool/client.cc      |  6 +--
+ 8 files changed, 7 insertions(+), 76 deletions(-)
+
+diff --git a/third_party/boringssl/src/include/openssl/ssl.h b/third_party/boringssl/src/include/openssl/ssl.h
+index c6e79c5df9..6cebf7f9fc 100644
+--- a/third_party/boringssl/src/include/openssl/ssl.h
++++ b/third_party/boringssl/src/include/openssl/ssl.h
+@@ -4875,7 +4875,6 @@ OPENSSL_EXPORT const SSL_METHOD *TLSv1_1_method(void);
+ OPENSSL_EXPORT const SSL_METHOD *TLSv1_2_method(void);
+ OPENSSL_EXPORT const SSL_METHOD *DTLSv1_method(void);
+ OPENSSL_EXPORT const SSL_METHOD *DTLSv1_2_method(void);
+-OPENSSL_EXPORT const SSL_METHOD *NTLS_method(void);
+ 
+ // These client- and server-specific methods call their corresponding generic
+ // methods.
+diff --git a/third_party/boringssl/src/ssl/handshake_client.cc b/third_party/boringssl/src/ssl/handshake_client.cc
+index 6e52d02f82..9b18792828 100644
+--- a/third_party/boringssl/src/ssl/handshake_client.cc
++++ b/third_party/boringssl/src/ssl/handshake_client.cc
+@@ -486,12 +486,13 @@ static enum ssl_hs_wait_t do_start_connect(SSL_HANDSHAKE *hs) {
+   if (SSL_is_dtls(hs->ssl)) {
+     hs->client_version =
+         hs->max_version >= TLS1_2_VERSION ? DTLS1_2_VERSION : DTLS1_VERSION;
+-  } else if (hs->client_version == NTLS_VERSION) {
+-    ssl->version = NTLS_VERSION;
+   } else {
+     hs->client_version =
+         hs->max_version >= TLS1_2_VERSION ? TLS1_2_VERSION : hs->max_version;
+   }
++  if (hs->client_version == NTLS_VERSION) {
++    ssl->version = NTLS_VERSION;
++  }
+ 
+   // If the configured session has expired or is not usable, drop it. We also do
+   // not offer sessions on renegotiation.
+diff --git a/third_party/boringssl/src/ssl/internal.h b/third_party/boringssl/src/ssl/internal.h
+index cecd372758..c568824e1b 100644
+--- a/third_party/boringssl/src/ssl/internal.h
++++ b/third_party/boringssl/src/ssl/internal.h
+@@ -3364,8 +3364,6 @@ bool tls_add_message(SSL *ssl, Array<uint8_t> msg);
+ bool tls_add_change_cipher_spec(SSL *ssl);
+ int tls_flush_flight(SSL *ssl);
+ 
+-bool ntls_new(SSL *ssl);
+-
+ bool dtls1_init_message(const SSL *ssl, CBB *cbb, CBB *body, uint8_t type);
+ bool dtls1_finish_message(const SSL *ssl, CBB *cbb, Array<uint8_t> *out_msg);
+ bool dtls1_add_message(SSL *ssl, Array<uint8_t> msg);
+diff --git a/third_party/boringssl/src/ssl/s3_lib.cc b/third_party/boringssl/src/ssl/s3_lib.cc
+index 6b68e513e8..b8b37b4d52 100644
+--- a/third_party/boringssl/src/ssl/s3_lib.cc
++++ b/third_party/boringssl/src/ssl/s3_lib.cc
+@@ -215,28 +215,4 @@ void tls_free(SSL *ssl) {
+   ssl->s3 = NULL;
+ }
+ 
+-bool ntls_new(SSL *ssl) {
+-  UniquePtr<SSL3_STATE> s3 = MakeUnique<SSL3_STATE>();
+-  if (!s3) {
+-    return false;
+-  }
+-
+-  s3->aead_read_ctx = SSLAEADContext::CreateNullCipher(SSL_is_dtls(ssl));
+-  s3->aead_write_ctx = SSLAEADContext::CreateNullCipher(SSL_is_dtls(ssl));
+-  s3->hs = ssl_handshake_new(ssl);
+-  if (!s3->aead_read_ctx || !s3->aead_write_ctx || !s3->hs) {
+-    return false;
+-  }
+-
+-  ssl->s3 = s3.release();
+-
+-  // Set the version to the highest supported version.
+-  //
+-  // TODO(davidben): Move this field into |s3|, have it store the normalized
+-  // protocol version, and implement this pre-negotiation quirk in |SSL_version|
+-  // at the API boundary rather than in internal state.
+-  ssl->version = NTLS_VERSION;
+-  return true;
+-}
+-
+ BSSL_NAMESPACE_END
+diff --git a/third_party/boringssl/src/ssl/ssl_test.cc b/third_party/boringssl/src/ssl/ssl_test.cc
+index c2f232116d..2d6ff4162e 100644
+--- a/third_party/boringssl/src/ssl/ssl_test.cc
++++ b/third_party/boringssl/src/ssl/ssl_test.cc
+@@ -1033,7 +1033,6 @@ TEST(SSLTest, DefaultVersion) {
+   ExpectDefaultVersion(DTLS1_VERSION, DTLS1_2_VERSION, &DTLS_method);
+   ExpectDefaultVersion(DTLS1_VERSION, DTLS1_VERSION, &DTLSv1_method);
+   ExpectDefaultVersion(DTLS1_2_VERSION, DTLS1_2_VERSION, &DTLSv1_2_method);
+-  ExpectDefaultVersion(NTLS_VERSION, NTLS_VERSION, &NTLS_method);
+ }
+ 
+ TEST(SSLTest, CipherProperties) {
+@@ -3410,9 +3409,6 @@ TEST(SSLTest, ClientHello) {
+     SCOPED_TRACE(t.max_version);
+ 
+     bssl::UniquePtr<SSL_CTX> ctx(SSL_CTX_new(TLS_method()));
+-    if (t.max_version == NTLS_VERSION) {
+-      ctx.reset(SSL_CTX_new(NTLS_method()));
+-    }
+     
+     ASSERT_TRUE(ctx);
+     // Our default cipher list varies by CPU capabilities, so manually place the
+diff --git a/third_party/boringssl/src/ssl/ssl_versions.cc b/third_party/boringssl/src/ssl/ssl_versions.cc
+index a81eb7d837..6d1878315a 100644
+--- a/third_party/boringssl/src/ssl/ssl_versions.cc
++++ b/third_party/boringssl/src/ssl/ssl_versions.cc
+@@ -168,11 +168,11 @@ const struct {
+   uint16_t version;
+   uint32_t flag;
+ } kProtocolVersions[] = {
++    {NTLS_VERSION, SSL_OP_NO_NTLS},
+     {TLS1_VERSION, SSL_OP_NO_TLSv1},
+     {TLS1_1_VERSION, SSL_OP_NO_TLSv1_1},
+     {TLS1_2_VERSION, SSL_OP_NO_TLSv1_2},
+     {TLS1_3_VERSION, SSL_OP_NO_TLSv1_3},
+-    {NTLS_VERSION, SSL_OP_NO_NTLS},
+ };
+ 
+ bool ssl_get_version_range(const SSL_HANDSHAKE *hs, uint16_t *out_min_version,
+diff --git a/third_party/boringssl/src/ssl/tls_method.cc b/third_party/boringssl/src/ssl/tls_method.cc
+index a22653350c..749f4dcf84 100644
+--- a/third_party/boringssl/src/ssl/tls_method.cc
++++ b/third_party/boringssl/src/ssl/tls_method.cc
+@@ -166,28 +166,6 @@ static const SSL_PROTOCOL_METHOD kTLSProtocolMethod = {
+     tls_set_write_state,
+ };
+ 
+-static const SSL_PROTOCOL_METHOD kNTLSProtocolMethod = {
+-    false /* is_dtls */,
+-    ntls_new,
+-    tls_free,
+-    tls_get_message,
+-    tls_next_message,
+-    tls_has_unprocessed_handshake_data,
+-    tls_open_handshake,
+-    tls_open_change_cipher_spec,
+-    tls_open_app_data,
+-    tls_write_app_data,
+-    tls_dispatch_alert,
+-    tls_init_message,
+-    tls_finish_message,
+-    tls_add_message,
+-    tls_add_change_cipher_spec,
+-    tls_flush_flight,
+-    tls_on_handshake_complete,
+-    tls_set_read_state,
+-    tls_set_write_state,
+-};
+-
+ static bool ssl_noop_x509_check_client_CA_names(
+     STACK_OF(CRYPTO_BUFFER) *names) {
+   return true;
+@@ -299,15 +277,6 @@ const SSL_METHOD *TLSv1_method(void) {
+   return &kMethod;
+ }
+ 
+-const SSL_METHOD *NTLS_method(void) {
+-  static const SSL_METHOD kMethod = {
+-      NTLS_VERSION,
+-      &kNTLSProtocolMethod,
+-      &ssl_crypto_x509_method,
+-  };
+-  return &kMethod;
+-}
+-
+ // Legacy side-specific methods.
+ 
+ const SSL_METHOD *TLSv1_2_server_method(void) {
+@@ -322,10 +291,6 @@ const SSL_METHOD *TLSv1_server_method(void) {
+   return TLSv1_method();
+ }
+ 
+-const SSL_METHOD *NTLS_server_method(void) {
+-  return NTLS_method();
+-}
+-
+ const SSL_METHOD *TLSv1_2_client_method(void) {
+   return TLSv1_2_method();
+ }
+@@ -353,7 +318,3 @@ const SSL_METHOD *TLS_server_method(void) {
+ const SSL_METHOD *TLS_client_method(void) {
+   return TLS_method();
+ }
+-
+-const SSL_METHOD *NTLS_client_method(void) {
+-  return NTLS_method();
+-}
+diff --git a/third_party/boringssl/src/tool/client.cc b/third_party/boringssl/src/tool/client.cc
+index 4345c8caca..2ade48ae11 100644
+--- a/third_party/boringssl/src/tool/client.cc
++++ b/third_party/boringssl/src/tool/client.cc
+@@ -405,10 +405,10 @@ bool Client(const std::vector<std::string> &args) {
+   }
+ 
+   bssl::UniquePtr<SSL_CTX> ctx;
++  ctx.reset(SSL_CTX_new(TLS_method()));
+   if (args_map.count("-ntls") != 0) {
+-    ctx.reset(SSL_CTX_new(NTLS_method()));
+-  } else {
+-    ctx.reset(SSL_CTX_new(TLS_method()));
++    SSL_CTX_set_min_proto_version(ctx.get(), NTLS_VERSION);
++    SSL_CTX_set_min_proto_version(ctx.get(), NTLS_VERSION);
+   }
+ 
+   const char *keylog_file = getenv("SSLKEYLOGFILE");
+-- 
+2.47.2
+

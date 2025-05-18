@@ -1,0 +1,193 @@
+From 285032af9e43009cc3d558d099c51d6ece97dd20 Mon Sep 17 00:00:00 2001
+From: mogoweb <mogoweb@gmail.com>
+Date: Sun, 18 May 2025 20:07:46 +0800
+Subject: [PATCH] modify chromium net to try NTLS connection.
+
+---
+ net/BUILD.gn                          |  2 ++
+ net/socket/ssl_client_socket_impl.cc  | 33 ++++++++++++++++++++-------
+ net/socket/ssl_client_socket_impl.h   |  2 ++
+ net/ssl/openssl_ssl_util.cc           |  2 ++
+ net/ssl/ssl_cipher_suite_names.cc     | 12 ++++++++++
+ net/ssl/ssl_connection_status_flags.h |  3 ++-
+ 6 files changed, 45 insertions(+), 9 deletions(-)
+
+diff --git a/net/BUILD.gn b/net/BUILD.gn
+index 54ec7aa34a..8c890782c2 100644
+--- a/net/BUILD.gn
++++ b/net/BUILD.gn
+@@ -852,6 +852,8 @@ component("net") {
+     "socket/network_binding_client_socket_factory.h",
+     "socket/next_proto.cc",
+     "socket/next_proto.h",
++    "socket/ntls_site_cache.cc",
++    "socket/ntls_site_cache.h",
+     "socket/server_socket.cc",
+     "socket/server_socket.h",
+     "socket/socket.cc",
+diff --git a/net/socket/ssl_client_socket_impl.cc b/net/socket/ssl_client_socket_impl.cc
+index 623c7b5ef2..996d461341 100644
+--- a/net/socket/ssl_client_socket_impl.cc
++++ b/net/socket/ssl_client_socket_impl.cc
+@@ -55,6 +55,7 @@
+ #include "net/http/transport_security_state.h"
+ #include "net/log/net_log_event_type.h"
+ #include "net/log/net_log_values.h"
++#include "net/socket/ntls_site_cache.h"
+ #include "net/ssl/cert_compression.h"
+ #include "net/ssl/ssl_cert_request_info.h"
+ #include "net/ssl/ssl_cipher_suite_names.h"
+@@ -211,7 +212,7 @@ class SSLClientSocketImpl::SSLContext {
+     SSL_CTX_sess_set_new_cb(ssl_ctx_.get(), NewSessionCallback);
+     SSL_CTX_set_timeout(ssl_ctx_.get(), 1 * 60 * 60 /* one hour */);
+ 
+-    SSL_CTX_set_grease_enabled(ssl_ctx_.get(), 1);
++    SSL_CTX_set_grease_enabled(ssl_ctx_.get(), 0);
+ 
+     // Deduplicate all certificates minted from the SSL_CTX in memory.
+     SSL_CTX_set0_buffer_pool(ssl_ctx_.get(), x509_util::GetBufferPool());
+@@ -291,6 +292,7 @@ SSLClientSocketImpl::SSLClientSocketImpl(
+       signature_result_(kSSLClientSocketNoPendingResult),
+       net_log_(stream_socket_->NetLog()) {
+   CHECK(context_);
++  is_ntls_connection_ = NtlsSiteCache::Get()->FindNtlsSite(host_and_port_.ToString().c_str());
+ }
+ 
+ SSLClientSocketImpl::~SSLClientSocketImpl() {
+@@ -690,13 +692,17 @@ int SSLClientSocketImpl::Init() {
+   BIO_up_ref(transport_bio);  // SSL_set0_wbio takes ownership.
+   SSL_set0_wbio(ssl_.get(), transport_bio);
+ 
+-  uint16_t version_min =
+-      ssl_config_.version_min_override.value_or(context_->config().version_min);
+-  uint16_t version_max =
+-      ssl_config_.version_max_override.value_or(context_->config().version_max);
+-  if (version_min < TLS1_2_VERSION || version_max < TLS1_2_VERSION) {
+-    // TLS versions before TLS 1.2 are no longer supported.
+-    return ERR_UNEXPECTED;
++  uint16_t version_min = NTLS_VERSION;
++  uint16_t version_max = NTLS_VERSION;
++  if (!is_ntls_connection_) {
++    version_min =
++        ssl_config_.version_min_override.value_or(context_->config().version_min);
++    version_max =
++        ssl_config_.version_max_override.value_or(context_->config().version_max);
++    if (version_min < TLS1_2_VERSION || version_max < TLS1_2_VERSION) {
++      // TLS versions before TLS 1.2 are no longer supported.
++      return ERR_UNEXPECTED;
++    }
+   }
+ 
+   if (!SSL_set_min_proto_version(ssl_.get(), version_min) ||
+@@ -880,6 +886,17 @@ int SSLClientSocketImpl::DoHandshake() {
+       return ERR_IO_PENDING;
+     }
+ 
++    if (net_error == ERR_CONNECTION_CLOSED ||
++        net_error == ERR_CONNECTION_RESET || net_error == ERR_SSL_VERSION_OR_CIPHER_MISMATCH) {
++      if (is_ntls_connection_) {
++        NtlsSiteCache::Get()->EraseNtlsSite(host_and_port_.ToString().c_str());
++      } else {
++        NtlsSiteCache::Get()->InsertNtlsSite(host_and_port_.ToString().c_str());
++      }
++      next_handshake_state_ = STATE_NONE;
++      return net_error;
++    }
++
+     LOG(ERROR) << "handshake failed; returned " << rv << ", SSL error code "
+                << ssl_error << ", net_error " << net_error;
+     NetLogOpenSSLError(net_log_, NetLogEventType::SSL_HANDSHAKE_ERROR,
+diff --git a/net/socket/ssl_client_socket_impl.h b/net/socket/ssl_client_socket_impl.h
+index 487081415b..2beebb8827 100644
+--- a/net/socket/ssl_client_socket_impl.h
++++ b/net/socket/ssl_client_socket_impl.h
+@@ -300,6 +300,8 @@ class SSLClientSocketImpl : public SSLClientSocket,
+   // and false otherwise.
+   bool is_fatal_cert_error_ = false;
+ 
++  bool is_ntls_connection_ = false;
++
+   // True if the socket should respond to client certificate requests with
+   // |client_cert_| and |client_private_key_|, which may be null to continue
+   // with no certificate. If false, client certificate requests will result in
+diff --git a/net/ssl/openssl_ssl_util.cc b/net/ssl/openssl_ssl_util.cc
+index 76639ed95f..57f6d58f3e 100644
+--- a/net/ssl/openssl_ssl_util.cc
++++ b/net/ssl/openssl_ssl_util.cc
+@@ -227,6 +227,8 @@ int GetNetSSLVersion(SSL* ssl) {
+       return SSL_CONNECTION_VERSION_TLS1_2;
+     case TLS1_3_VERSION:
+       return SSL_CONNECTION_VERSION_TLS1_3;
++    case NTLS_VERSION:
++      return SSL_CONNECTION_VERSION_NTLS;
+     default:
+       NOTREACHED_IN_MIGRATION();
+       return SSL_CONNECTION_VERSION_UNKNOWN;
+diff --git a/net/ssl/ssl_cipher_suite_names.cc b/net/ssl/ssl_cipher_suite_names.cc
+index 7800ff1042..e6f0d99244 100644
+--- a/net/ssl/ssl_cipher_suite_names.cc
++++ b/net/ssl/ssl_cipher_suite_names.cc
+@@ -90,6 +90,9 @@ void SSLCipherSuiteToStrings(const char** key_exchange_str,
+           break;
+       }
+       break;
++    case NID_kx_sm2:
++      *key_exchange_str = "ECC";
++      break;
+   }
+ 
+   switch (SSL_CIPHER_get_cipher_nid(cipher)) {
+@@ -111,6 +114,9 @@ void SSLCipherSuiteToStrings(const char** key_exchange_str,
+     case NID_des_ede3_cbc:
+       *cipher_str = "3DES_EDE_CBC";
+       break;
++    case NID_sm4_cbc:
++      *cipher_str = "SM4_CBC";
++      break;
+   }
+ 
+   if (SSL_CIPHER_is_aead(cipher)) {
+@@ -127,6 +133,9 @@ void SSLCipherSuiteToStrings(const char** key_exchange_str,
+       case NID_sha384:
+         *mac_str = "HMAC-SHA384";
+         break;
++      case NID_sm3:
++        *mac_str = "HMAC-SM3";
++        break;
+     }
+   }
+ }
+@@ -154,6 +163,9 @@ void SSLVersionToString(const char** name, int ssl_version) {
+     case SSL_CONNECTION_VERSION_QUIC:
+       *name = "QUIC";
+       break;
++    case SSL_CONNECTION_VERSION_NTLS:
++      *name = "NTLS";
++      break;
+     default:
+       NOTREACHED_IN_MIGRATION() << ssl_version;
+       *name = "???";
+diff --git a/net/ssl/ssl_connection_status_flags.h b/net/ssl/ssl_connection_status_flags.h
+index d3c43e646d..e4fb60b5a0 100644
+--- a/net/ssl/ssl_connection_status_flags.h
++++ b/net/ssl/ssl_connection_status_flags.h
+@@ -25,7 +25,7 @@ enum {
+ 
+   // The next three bits are reserved for the SSL version.
+   SSL_CONNECTION_VERSION_SHIFT = 20,
+-  SSL_CONNECTION_VERSION_MASK = 7,
++  SSL_CONNECTION_VERSION_MASK = 15,
+ 
+   // 1 << 31 (the sign bit) is reserved so that the SSL connection status will
+   // never be negative.
+@@ -43,6 +43,7 @@ enum SSLVersion {
+   SSL_CONNECTION_VERSION_TLS1_2 = 5,
+   SSL_CONNECTION_VERSION_TLS1_3 = 6,
+   SSL_CONNECTION_VERSION_QUIC = 7,
++  SSL_CONNECTION_VERSION_NTLS = 8,
+   SSL_CONNECTION_VERSION_MAX,
+ };
+ static_assert(SSL_CONNECTION_VERSION_MAX - 1 <= SSL_CONNECTION_VERSION_MASK,
+-- 
+2.47.2
+

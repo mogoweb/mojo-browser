@@ -4,3 +4,5 @@ mojo/0002-modify-product-name-to-Mojo-Browser.patch
 mojo/0003-add-sm3-algorithm.patch
 mojo/0004-add-sm4-algorithm.patch
 mojo/0005-add-TLCP-support-for-boringssl.patch
+mojo/0006-refine-openssl-TLCP-options.patch
+mojo/0007-modify-chromium-net-to-try-NTLS-connection.patch
